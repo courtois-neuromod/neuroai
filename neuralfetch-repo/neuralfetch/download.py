@@ -565,6 +565,7 @@ class Datalad(BaseDownload):
                 Contains a tuple of str and bool. Bool defines if str is a glob
         """
         import datalad.api as dlad
+        logging.getLogger("datalad").setLevel(logging.WARNING)
         # clone repo
         clone_res = dlad.clone(source=self.repo_url, path=self._dl_dir)
 

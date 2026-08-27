@@ -13,7 +13,7 @@ from functools import partial
 import torch
 from torch import nn
 
-from .base import BaseModelConfig
+from .base import BaseBrainModelConfig
 from .common import (
     BahdanauAttention,
     ChannelMerger,
@@ -32,7 +32,7 @@ class ConvSequence(nn.Module):
         self,
         channels: tp.Sequence[int],
         kernel: int = 4,
-        dilation_growth: int = 1,
+        dilation_growth: float = 1,
         dilation_period: int | None = None,
         stride: int = 2,
         dropout: float = 0.0,
@@ -52,7 +52,7 @@ class ConvSequence(nn.Module):
         activation: tp.Any = None,
     ) -> None:
         super().__init__()
-        dilation = 1
+        dilation: float = 1
         channels = tuple(channels)
         self.skip = skip
         self.sequence = nn.ModuleList()
@@ -77,7 +77,7 @@ class ConvSequence(nn.Module):
                     raise ValueError(f"Odd kernel required with dilation, got {kernel}")
             if dilation_period and (k % dilation_period) == 0:
                 dilation = 1
-            pad = kernel // 2 * dilation
+            pad = kernel // 2 * int(dilation)
             layers.append(
                 Conv(
                     chin,
@@ -85,11 +85,11 @@ class ConvSequence(nn.Module):
                     kernel,
                     stride,
                     pad,
-                    dilation=dilation,
+                    dilation=int(dilation),
                     groups=groups if k > 0 else 1,
                 )
             )
-            dilation *= dilation_growth
+            dilation = dilation * dilation_growth
             # non-linearity
             if activation_on_last or not is_last:
                 if batch_norm:
@@ -131,7 +131,7 @@ class ConvSequence(nn.Module):
         return x
 
 
-class SimpleConv(BaseModelConfig):
+class SimpleConv(BaseBrainModelConfig):
     """1-D convolutional encoder, adapted from brainmagick.
 
     Parameters
@@ -149,7 +149,7 @@ class SimpleConv(BaseModelConfig):
         Kernel size for every convolutional layer (must be odd).
     growth : float
         Multiplicative channel growth factor per layer.
-    dilation_growth : int
+    dilation_growth : float
         Multiplicative dilation growth factor per layer.
     dilation_period : int or None
         If set, reset dilation to 1 every *dilation_period* layers.
@@ -211,7 +211,7 @@ class SimpleConv(BaseModelConfig):
     # Conv layer
     kernel_size: int = 5
     growth: float = 1.0
-    dilation_growth: int = 2
+    dilation_growth: float = 2
     dilation_period: int | None = None
     skip: bool = False
     post_skip: bool = False
@@ -254,8 +254,9 @@ class SimpleConv(BaseModelConfig):
     backbone_out_channels: int | None = None  # If provided, the output of the
     # backbone (i.e. layer before the output heads) will have this dimensionality
 
-    def build(self, n_in_channels: int, n_outputs: int) -> "SimpleConvModel":
-        return SimpleConvModel(n_in_channels, n_outputs, config=self)
+    def build(self, n_spatial_locations: int, n_outputs: int | None) -> "SimpleConvModel":
+        assert n_outputs is not None, "SimpleConv requires n_outputs"
+        return SimpleConvModel(n_spatial_locations, n_outputs, config=self)
 
 
 class SimpleConvModel(nn.Module):
@@ -445,8 +446,11 @@ class SimpleConvTimeAgg(SimpleConv):
     # Output head(s)
     output_head_config: Mlp | dict[str, Mlp] | None = None
 
-    def build(self, n_in_channels: int, n_outputs: int) -> "SimpleConvTimeAggModel":
-        return SimpleConvTimeAggModel(n_in_channels, n_outputs, config=self)
+    def build(
+        self, n_spatial_locations: int, n_outputs: int | None
+    ) -> "SimpleConvTimeAggModel":
+        assert n_outputs is not None, "SimpleConvTimeAgg requires n_outputs"
+        return SimpleConvTimeAggModel(n_spatial_locations, n_outputs, config=self)
 
 
 class SimpleConvTimeAggModel(SimpleConvModel):

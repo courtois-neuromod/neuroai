@@ -7,10 +7,12 @@
 import ast
 import collections
 import importlib.util
+import inspect
 import logging
 import pprint
 import typing as tp
 from pathlib import Path
+from urllib.parse import urlparse
 
 import exca
 import exca.steps
@@ -18,6 +20,7 @@ import numpy as np
 import pydantic
 import yaml
 from exca.cachedict import DumpContext
+from packaging.requirements import Requirement
 
 PathLike = str | Path
 
@@ -151,10 +154,24 @@ class _Module(BaseModel):
         }
         missing = []
         for req in cls.requirements:
-            name = req.split(">")[0].split("<")[0].split("=")[0].split("[")[0]
+            if "://" in req:
+                # VCS URLs are not valid PEP 508 requirements, so parse by hand:
+                # prefer the #egg= fragment, else fall back to the last path segment.
+                parsed = urlparse(req.split("+", 1)[-1])
+                name = parsed.path.rsplit("/", 1)[-1].split("@")[0].removesuffix(".git")
+                for part in parsed.fragment.split("&"):
+                    if part.startswith("egg="):
+                        name = part.split("=", 1)[-1]
+                        break
+            else:
+                name = Requirement(req).name
             spec_name = import_names.get(name, name.replace("-", "_"))
-            if importlib.util.find_spec(spec_name) is None:
-                missing.append(name)
+            try:
+                found = importlib.util.find_spec(spec_name) is not None
+            except (ModuleNotFoundError, ValueError):
+                found = False
+            if not found:
+                missing.append(req)
         if missing:
             raise ModuleNotFoundError(
                 f"{cls.__name__} requires packages that are not installed.\n"
@@ -280,7 +297,7 @@ class TimedArray:
         start: float,
         data: np.ndarray | None = None,
         duration: float | None = None,
-        aggregation: tp.Literal["sum", "mean"] = "sum",
+        aggregation: tp.Literal["sum", "mean", "single"] = "sum",
         header: dict[str, tp.Any] | None = None,
     ) -> None:
         """
@@ -299,9 +316,10 @@ class TimedArray:
             ``frequency > 0``, the last dimension is checked for
             consistency. If ``data`` is not provided, shape is inferred
             from the first data added.
-        aggregation: "sum" or "mean"
-            Aggregation mode on the time domain when adding to the
-            timed array.
+        aggregation: "sum", "mean" or "single"
+            Aggregation mode on the time domain when adding to the timed
+            array. ``"single"`` raises if any output sample receives a
+            second contribution.
         header: optional dict
             Domain-specific attributes (channel names, electrode
             positions, space info, etc.) persisted alongside the data.
@@ -341,11 +359,11 @@ class TimedArray:
             raise ValueError(f"duration must be provided if {frequency=}")
         else:
             self.duration = duration
-        # averaging
+        # per-sample contribution count (mean: online average; single: collision check)
         self._overlapping_data_count: None | np.ndarray = None
-        if aggregation == "mean":
+        if aggregation in ("mean", "single"):
             num = self.data.shape[-1] if self.frequency else 1
-            self._overlapping_data_count = np.zeros(num, dtype=int)
+            self._overlapping_data_count = bool(self.data.size) * np.ones(num, dtype=int)
         elif aggregation != "sum":
             raise ValueError(f"Unknown {aggregation=}")
 
@@ -390,7 +408,26 @@ class TimedArray:
         other_data = np.asarray(other.data[..., other_slice])
         if self._overlapping_data_count is None:  # sum
             self.data[..., self_slice] += other_data
-        else:  # average
+        elif self.aggregation == "single":
+            counts = self._overlapping_data_count[..., self_slice]
+            if counts.any():
+                freq = self.frequency
+                if freq:
+                    assert self_slice is not None
+                    offsets = np.flatnonzero(counts)
+                    lo = self.start + freq.to_sec(self_slice.start + int(offsets[0]))
+                    hi = self.start + freq.to_sec(self_slice.start + int(offsets[-1]) + 1)
+                    where = f"output samples [{lo:g}, {hi:g})s at {freq}Hz"
+                else:
+                    where = f"the static slot at start={self.start}s (frequency=0)"
+                raise ValueError(
+                    f"aggregation='single' got a colliding contribution on "
+                    f"{where} — added arrays cover overlapping time ranges. "
+                    "Use 'sum' or 'mean' if merging is intended."
+                )
+            self.data[..., self_slice] += other_data
+            counts += 1
+        else:  # mean: online average
             counts = self._overlapping_data_count[..., self_slice]
             upd = counts / (1.0 + counts)
             self.data[..., self_slice] *= upd
@@ -404,7 +441,7 @@ class TimedArray:
         if self.start == _UNSET_START or start == _UNSET_START:
             raise RuntimeError(
                 "Cannot compute overlap on a TimedArray with unset start time. "
-                "Call with_start() first."
+                "Call copy(start=...) first."
             )
         if duration < 0:
             raise ValueError(f"duration should be >=0, got {duration=}")
@@ -435,15 +472,20 @@ class TimedArray:
         out = start, duration, slice(start_ind, start_ind + duration_ind)
         return out
 
-    def with_start(self: _TA, start: float) -> _TA:
-        """Return a lightweight copy sharing the data array with a new start time."""
-        cls = type(self)
-        return cls(
-            data=self.data,
-            frequency=self.frequency,
-            start=start,
-            header=self.header,
-        )
+    def copy(self: _TA, **changes: tp.Any) -> _TA:
+        """Shallow copy, overriding the given fields and carrying the rest over."""
+        counts = self._overlapping_data_count
+        if counts is not None:
+            safe_empty = not self.data.size and not counts.any()
+            safe_single = bool(self.data.size) and np.all(counts == 1)
+            if not (safe_empty or safe_single):
+                raise RuntimeError(
+                    "Cannot copy a TimedArray with aggregated contribution counts"
+                )
+        names = list(inspect.signature(type(self).__init__).parameters)[1:]  # drop self
+        kw = {name: getattr(self, name) for name in names}
+        kw.update(changes)
+        return type(self)(**kw)
 
     def overlap(self: _TA, start: float, duration: float) -> _TA:
         """Returns the sub TimedArray overlapping with the provided start
@@ -529,9 +571,9 @@ class Step(exca.steps.Step, _Module, discriminator_key="name"):
         if (
             self.CACHE_TYPE is not None
             and self.infra is not None
-            and self.infra.cache_type is None
+            and self.infra.cache_type is None  # type: ignore[attr-defined]
         ):
-            self.infra.cache_type = self.CACHE_TYPE
+            self.infra.cache_type = self.CACHE_TYPE  # type: ignore[attr-defined]
 
     @pydantic.model_validator(mode="wrap")
     @classmethod
@@ -588,13 +630,13 @@ class Chain(exca.steps.Chain, Step):
         if hasattr(exca.steps.Step, "CACHE_TYPE"):
             return  # cache propagation handled by exca itself (>=0.5.23)
         # Chain output matches last step: use its cache format (instance > class default).
-        if self.infra is not None and self.infra.cache_type is None:
+        if self.infra is not None and self.infra.cache_type is None:  # type: ignore[attr-defined]
             seq = (
                 list(self.steps.values()) if isinstance(self.steps, dict) else self.steps
             )
             if seq:
                 last = seq[-1]
-                if last.infra is not None and last.infra.cache_type is not None:
-                    self.infra.cache_type = last.infra.cache_type
+                if last.infra is not None and last.infra.cache_type is not None:  # type: ignore[attr-defined]
+                    self.infra.cache_type = last.infra.cache_type  # type: ignore[attr-defined]
                 else:
-                    self.infra.cache_type = last.CACHE_TYPE
+                    self.infra.cache_type = last.CACHE_TYPE  # type: ignore[attr-defined]

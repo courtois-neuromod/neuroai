@@ -4,7 +4,7 @@
   <img src="assets/hero.png" alt="NeuralBench: open, reproducible benchmarking of NeuroAI models on EEG, MEG, and fMRI -- 36 EEG tasks, 94 EEG datasets (9.5k+ subjects, 13.6k+ hours of recording), and 14 models" width="100%">
 </p>
 
-`neuralbench` is a unified framework to benchmark **NeuroAI models**. It is designed for evaluating pretrained or randomly initialized models on a diverse suite of downstream tasks for brain modeling -- not for pretraining itself. It supports multiple neuroimaging devices -- **EEG**, **MEG**, and **fMRI** -- with more tasks and devices to come.
+`neuralbench` is a unified framework to benchmark **NeuroAI models**. It is designed for evaluating pretrained or randomly initialized models on a diverse suite of downstream tasks for brain modeling -- not for pretraining itself. It supports multiple neuroimaging devices -- **EEG**, **MEG**, **fMRI**, and **EMG** -- with more tasks and devices to come.
 
 **Examples**:
 ```console
@@ -41,7 +41,7 @@ neuralbench eeg audiovisual_stimulus --prepare    # 2. Prepare cache (preprocess
 neuralbench eeg audiovisual_stimulus              # 3. Run the full grid
 ```
 
-Steps 2 and 3 dispatch to SLURM when it is auto-detected on your machine; step 3 additionally requires `SLURM_PARTITION` to be set in your neuralbench config. Pass `--debug` to either step to force local execution. Step 2 is mostly useful for larger datasets that benefit from parallel preprocessing with SLURM, and is not strictly necessary for `audiovisual_stimulus`. Add `--debug` to any command for a fast local sanity-check run with a subsampled dataset and a limited number of epochs:
+Steps 2 and 3 dispatch to SLURM when it is auto-detected on your machine; step 3 additionally requires `SLURM_PARTITION` to be set in your neuralbench config. Pass `--debug` to either step to force local execution. To run the full config locally (no SLURM, full epochs and batches), set `"CLUSTER": null` in `~/.neuralbench/config.json` (the default `"auto"` uses SLURM when available; `"slurm"` always submits). Step 2 is mostly useful for larger datasets that benefit from parallel preprocessing with SLURM, and is not strictly necessary for `audiovisual_stimulus`. Add `--debug` to any command for a fast local sanity-check run with a subsampled dataset and a limited number of epochs:
 
 ```console
 neuralbench eeg audiovisual_stimulus --debug      # Local validation run
@@ -61,10 +61,11 @@ Results can be visualized on `Weights & Biases`, or aggregated locally using `--
 > [!TIP]
 > See the full [quickstart tutorial](https://facebookresearch.github.io/neuroai/neuralbench/auto_examples/quickstart/01_run_first_task.html) for a walkthrough of the CLI, config system, and model selection.
 
-The same workflow applies to **MEG** and **fMRI** tasks -- just swap the device and task name:
+The same workflow applies to **MEG**, **fMRI**, and **EMG** tasks -- just swap the device and task name:
 ```console
 neuralbench meg typing --debug          # MEG keystroke classification in debug mode
 neuralbench fmri image --debug          # fMRI image retrieval in debug mode
+neuralbench emg typing -m emg2qwerty --debug   # EMG → keystroke CTC decoding (emg2qwerty)
 ```
 
 ## Running the full EEG benchmark
@@ -82,7 +83,7 @@ Use `-m all_classic`, `-m all_fm`, or `-m all_classic all_fm` to evaluate across
 See the [full EEG benchmark guide](https://facebookresearch.github.io/neuroai/neuralbench/full_benchmark.html) for prerequisites, resource requirements (~3.3 TB disk, 1 GPU with 32 GB VRAM per job), dataset variant options, and computational considerations.
 
 > [!IMPORTANT]
-> A handful of datasets cannot be fetched automatically and require a one-time manual step (creating an account, accepting a license agreement, or submitting an application form). The affected tasks are `pathology`, `artifact`, and `clinical_event` (TUH EEG Corpus); `image` and `meg/image` (THINGS-images); `emotion` (FACED on Synapse); `video` (SEED-DV); `fmri/image` (NSD); `motor_imagery` and `mental_arithmetic` (Shin2017OpenA and Shin2017OpenB); `eeg/typing` / `meg/typing` (Levy2025Brain, not yet publicly released); and `speech` (Brennan2019 on Deep Blue Data: the legacy `urlretrieve`-based downloader is currently blocked by Cloudflare's bot challenge, so the v1 files must be fetched manually via Globus until upstream restores anonymous HTTP access). See the [Datasets requiring manual download](https://facebookresearch.github.io/neuroai/neuralbench/full_benchmark.html#manual-download-datasets) section of the benchmark guide for the exact steps for each one.
+> A handful of datasets cannot be fetched automatically and require a one-time manual step (creating an account, accepting a license agreement, or submitting an application form). The affected tasks are `pathology`, `artifact`, and `clinical_event` (TUH EEG Corpus); `image` and `meg/image` (THINGS-images); `emotion` (FACED on Synapse); `video` (SEED-DV); `fmri/image` (NSD); `motor_imagery` and `mental_arithmetic` (Shin2017OpenA and Shin2017OpenB); and `speech` (Brennan2019 on Deep Blue Data: the legacy `urlretrieve`-based downloader is currently blocked by Cloudflare's bot challenge, so the v1 files must be fetched manually via Globus until upstream restores anonymous HTTP access). See the [Datasets requiring manual download](https://facebookresearch.github.io/neuroai/neuralbench/full_benchmark.html#manual-download-datasets) section of the benchmark guide for the exact steps for each one.
 
 ## Weights & Biases setup
 
@@ -141,12 +142,12 @@ See the [CONTRIBUTING](https://github.com/facebookresearch/neuroai/blob/main/neu
 
 ## Citing
 ```bibtex
-@misc{banville2026neuralbench,
-  title        = {NeuralBench: A Unifying Framework to Benchmark NeuroAI Models},
-  author       = {Banville, Hubert and d'Ascoli, St{\'e}phane and Dahan, Simon and Rapin, J{\'e}r{\'e}my and Careil, Marl{\`e}ne and Benchetrit, Yohann and L{\'e}vy, Jarod and Panchavati, Saarang and Ratouchniak, Antoine and Zhang, Mingfang and Cascardi, Elisa and Begany, Katelyn and Brooks, Teon and King, Jean-R{\'e}mi},
-  year         = {2026},
-  howpublished = {Brain \& AI team, Meta FAIR},
-  url          = {https://ai.meta.com/research/publications/neuralbench-a-unifying-framework-to-benchmark-neuroai-models/},
+@article{banville2026neuralbench,
+  title   = {NeuralBench: A Unifying Framework to Benchmark NeuroAI Models},
+  author  = {Banville, Hubert and d'Ascoli, St{\'e}phane and Dahan, Simon and Rapin, J{\'e}r{\'e}my and Careil, Marl{\`e}ne and Benchetrit, Yohann and L{\'e}vy, Jarod and Panchavati, Saarang and Ratouchniak, Antoine and Zhang, Mingfang and Cascardi, Elisa and Begany, Katelyn and Brooks, Teon and King, Jean-R{\'e}mi},
+  year    = {2026},
+  journal = {arXiv preprint arXiv:2605.08495},
+  url     = {https://arxiv.org/abs/2605.08495},
 }
 ```
 

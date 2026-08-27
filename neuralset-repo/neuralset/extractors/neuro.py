@@ -4,11 +4,15 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import hashlib
 import inspect
 import logging
 import typing as tp
+import warnings
 from collections import defaultdict
+from difflib import get_close_matches
 from itertools import compress
+from pathlib import Path
 
 import mne
 import numpy as np
@@ -23,9 +27,9 @@ from mne._fiff.pick import _VALID_CHANNEL_TYPES  # type: ignore
 from tqdm import tqdm
 
 import neuralset as ns
-from neuralset import utils
+from neuralset import base, utils
 from neuralset.base import TimedArray
-from neuralset.events import etypes
+from neuralset.events import etypes, eventquery
 
 from .base import BaseExtractor, BaseStatic
 
@@ -41,6 +45,7 @@ FSAVERAGE_SIZES = {
     "fsaverage6": 40962,
     "fsaverage7": 163842,
 }
+HCP_CIFTI_91K_SIZE = 91282
 
 
 def _overlap(
@@ -91,7 +96,7 @@ class MneTimedArray(TimedArray):
             "lowpass": raw.info["lowpass"],
         }
         if start is None:
-            start = raw.first_samp / raw.info["sfreq"]
+            start = float(raw.first_samp / raw.info["sfreq"])
         return cls(
             data=data,
             frequency=raw.info["sfreq"],
@@ -432,16 +437,14 @@ class MneRaw(BaseExtractor):
         freq = ta.frequency
         ch_names = ta.ch_names
 
-        # Relocate cached data to the event's timeline position and extract window
-        ta = ta.with_start(event.start)
+        ta = ta.copy(start=event.start)
         tdata = ta.overlap(start=window_start, duration=window_stop - window_start)
-        tdata.data = np.asarray(
-            tdata.data
-        )  # materialize ContiguousMemmap before arithmetic
+        # exca caches return ContiguousMemmap which needs
+        # materializing to operate upon:
+        tdata.data = np.asarray(tdata.data)
         if self.scale_factor is not None:
             tdata.data = tdata.data * self.scale_factor
 
-        # Apply baseline to the data
         if self.baseline is not None:
             baseline_duration = self.baseline[1] - self.baseline[0]
             base = tdata.overlap(start + self.baseline[0], baseline_duration).data
@@ -690,13 +693,17 @@ class IeegExtractor(MneRaw):
 
 
 class SpikesExtractor(BaseExtractor):
-    """Feature extractor for spike data stored in HDF5/NWB files.
+    """Feature extractor for spike data in HDF5/NWB or pre-binned MNE format.
 
-    Reads spike times from HDF5 files and creates a dense binned array
-    of shape (n_units, n_time_bins) at the specified frequency.
+    Supports two input formats returned by :meth:`~neuralset.events.etypes.Spikes.read`:
+
+    - **NWB/HDF5** (``h5py.File``): spike times are binned into a dense array
+      of shape ``(n_units, n_time_bins)`` at the target frequency.
+    - **MNE** (``mne.io.RawArray``): pre-binned continuous data; resampled with
+      :meth:`mne.io.Raw.resample` when ``raw.info["sfreq"]`` differs from ``frequency``.
 
     The preprocessing steps, if specified, are ordered as follows:
-    1. Spike binning at target frequency
+    1. Spike binning or resampling to target frequency
     2. Scaling
     3. Baseline correction (applied on segments)
     4. Clamp (applied on segments)
@@ -704,8 +711,8 @@ class SpikesExtractor(BaseExtractor):
     Parameters
     ----------
     frequency : "native" or float, default="native"
-        Target sampling frequency for spike binning. If ``"native"``, uses the
-        frequency declared in the Spikes event.
+        Target sampling frequency (Hz). If ``"native"``, uses the frequency
+        declared in the Spikes event (NWB) or ``raw.info["sfreq"]`` (MNE).
     offset : float, default=0.0
         Time offset (in seconds) applied to the segment window.
     baseline : tuple of float, optional
@@ -824,12 +831,20 @@ class SpikesExtractor(BaseExtractor):
             else float(self.frequency)
         )
 
-        nwb_file = event.read()
-        try:
-            data, ch_names = self._bin_spikes(nwb_file, sfreq)
-        finally:
-            if isinstance(nwb_file, h5py.File):
-                nwb_file.close()
+        h5py_or_raw = event.read()
+        if isinstance(h5py_or_raw, h5py.File):
+            data, ch_names = self._bin_spikes(h5py_or_raw, sfreq)
+            h5py_or_raw.close()
+        elif isinstance(h5py_or_raw, mne.io.RawArray):
+            raw = h5py_or_raw
+            loaded_sfreq = float(raw.info["sfreq"])
+            ch_names = raw.ch_names
+            if loaded_sfreq != sfreq:
+                raw.load_data()
+                raw = raw.resample(sfreq, verbose=False)
+            data = raw.get_data()
+        else:
+            raise ValueError(f"Unsupported spike data type: {type(h5py_or_raw)}")
 
         if self.scaler is not None:
             scaler_cls = getattr(sklearn.preprocessing, self.scaler)()
@@ -869,7 +884,7 @@ class SpikesExtractor(BaseExtractor):
         assert ta.header is not None
         ch_names = ta.header["ch_names"].split(",")
 
-        ta = ta.with_start(event.start)
+        ta = ta.copy(start=event.start)
         tdata = ta.overlap(start=window_start, duration=window_stop - window_start)
         tdata.data = np.asarray(tdata.data)
         if self.scale_factor is not None:
@@ -1076,7 +1091,7 @@ class FmriCleaner(pydantic.BaseModel):
     filter: tp.Literal["butterworth", "cosine"] | None
         Filter to use: "butterworth" or "cosine".
     ensure_finite: bool
-        Whether to set nans to 0.
+        Whether to replace non-finite values (NaN, +/-Inf) with 0.
     """
 
     model_config = pydantic.ConfigDict(extra="forbid")
@@ -1091,6 +1106,7 @@ class FmriCleaner(pydantic.BaseModel):
         if (
             self.detrend
             or self.standardize
+            or self.ensure_finite
             or (self.high_pass is not None)
             or (self.low_pass is not None)
         ):
@@ -1137,6 +1153,20 @@ class BaseFmriProjector(DiscriminatedModel, discriminator_key="name"):
             Projected data with shape ``(n_features, time)``.
         """
         raise NotImplementedError
+
+    def apply_after_cache(self, data: np.ndarray) -> np.ndarray:
+        """Cheap per-row transform applied to cached data after it is read.
+
+        Default is the identity; override for projections that
+        are deferred until after caching.
+        """
+        return data
+
+    def after_cache_fields(self) -> list[str]:
+        """Field names that only affect :meth:`apply_after_cache` and must
+        therefore be excluded from the cache uid. Default: none.
+        """
+        return []
 
 
 class SurfaceProjector(BaseFmriProjector):
@@ -1345,27 +1375,126 @@ class AtlasProjector(BaseFmriProjector):
         return masker.fit_transform(rec).T
 
 
-class FoscoProjector(BaseFmriProjector):
-    """Subset HCP grayordinates to FOSCO visual ROIs.
+class _RoiSubsetProjector(BaseFmriProjector):
+    """Base for projectors that keep a named subset of a cached ``(nodes, time)``
+    array.
 
-    Applies a spatial mask using ``hcp_utils`` to keep only vertices
-    belonging to the FOSCO ROI set (41 visual areas from the HCP MMP1.0
-    parcellation).  Expects 2-D input of shape ``(nodes, time)``.
-
-    Examples
-    --------
-    >>> FoscoProjector()
-
-    Config usage::
-
-        "neuro": {
-            "name": "FmriExtractor",
-            "projection": {"name": "FoscoProjector"},
-            "from_space": "atlas_msmall",
-        }
+    Subclasses implement :meth:`_roi_nodes` (mapping each available region name
+    to its node indices for a given input size). ``_roi_noun`` customizes error
+    wording.
     """
 
-    ROIS: tp.ClassVar[list[str]] = [
+    selected_rois: set[str]
+    mode: tp.Literal["drop", "zero", "mean"] = "drop"
+    subset_size: int | None = None
+    subset_seed: int = 0
+    _selected: dict[int, dict[str, np.ndarray]] = pydantic.PrivateAttr(
+        default_factory=dict
+    )
+    _roi_noun: tp.ClassVar[str] = "ROIs"
+
+    def model_post_init(self, __context: tp.Any) -> None:
+        super().model_post_init(__context)
+        if not self.selected_rois:
+            raise ValueError("selected_rois cannot be empty")
+        if self.subset_size is not None and self.subset_size <= 0:
+            raise ValueError("subset_size must be a positive integer")
+
+    @property
+    def ordered_rois(self) -> list[str]:
+        """Selected ROI names in output-row order."""
+        return sorted(self.selected_rois)
+
+    def _roi_nodes(self, n_nodes: int) -> dict[str, np.ndarray]:
+        raise NotImplementedError
+
+    def _unknown_rois_error(self, unknown: set[str], available: set[str]) -> str:
+        available_sorted = sorted(available)
+        suggestions = []
+        for name in sorted(unknown):
+            matches = get_close_matches(name, available_sorted, n=1)
+            if matches:
+                suggestions.append(f"{name!r} -> {matches[0]!r}")
+        msg = f"Unknown {self._roi_noun}: {sorted(unknown)}."
+        if suggestions:
+            msg += f" Did you mean {', '.join(suggestions)}?"
+        msg += f" Available {self._roi_noun}: {', '.join(available_sorted)}"
+        return msg
+
+    def _selected_nodes(self, n_nodes: int) -> dict[str, np.ndarray]:
+        """Validated ``{selected roi -> node indices}`` for an input size."""
+        if n_nodes not in self._selected:
+            roi_nodes = self._roi_nodes(n_nodes)
+            unknown = self.selected_rois - roi_nodes.keys()
+            if unknown:
+                raise ValueError(self._unknown_rois_error(unknown, set(roi_nodes)))
+            selected = {roi: roi_nodes[roi] for roi in self.ordered_rois}
+            if self.subset_size is not None:
+                too_small = {
+                    roi: len(nodes)
+                    for roi, nodes in selected.items()
+                    if len(nodes) < self.subset_size
+                }
+                if too_small:
+                    sizes = ", ".join(
+                        f"{roi}={size}" for roi, size in sorted(too_small.items())
+                    )
+                    raise ValueError(
+                        f"subset_size={self.subset_size} exceeds selected ROI sizes: "
+                        f"{sizes}"
+                    )
+                selected = {
+                    roi: self._rng_for_roi(roi).choice(
+                        nodes, size=self.subset_size, replace=False
+                    )
+                    for roi, nodes in selected.items()
+                }
+            self._selected[n_nodes] = selected
+        return self._selected[n_nodes]
+
+    def _rng_for_roi(self, roi: str) -> np.random.Generator:
+        """Seed sampling per ROI so its subset is independent of other selected ROIs."""
+        key = f"{self.subset_seed}\0{roi}".encode()
+        seed = int.from_bytes(hashlib.blake2b(key, digest_size=8).digest(), "little")
+        return np.random.default_rng(seed)
+
+    def _get_mask(self, n_nodes: int) -> np.ndarray:
+        mask = np.zeros(n_nodes, dtype=bool)
+        for idx in self._selected_nodes(n_nodes).values():
+            mask[idx] = True
+        return mask
+
+    def apply_after_cache(self, data: np.ndarray) -> np.ndarray:
+        if data.ndim != 2:
+            raise ValueError(
+                f"{type(self).__name__} expects 2D (nodes, time) data, got {data.ndim}D"
+            )
+        data = np.asarray(data)
+        if self.mode == "mean":
+            nodes = self._selected_nodes(data.shape[0])
+            return np.stack(
+                [data[nodes[roi], :].mean(axis=0) for roi in self.ordered_rois]
+            )
+        mask = self._get_mask(data.shape[0])
+        if self.mode == "drop":
+            return data[mask, :]
+        out = data.copy()
+        out[~mask, :] = 0
+        return out
+
+    def after_cache_fields(self) -> list[str]:
+        return ["selected_rois", "mode", "subset_size", "subset_seed"]
+
+    def apply(self, rec: tp.Any, **kwargs: tp.Any) -> np.ndarray:
+        return rec.get_fdata()
+
+
+# Visual/"dynamic" Glasser ROI preset (HCP-MMP1.0): the 41 visual areas from
+# Fosco et al., ECCV 2024. Pass it as ``selected_rois`` to a projector, e.g.
+# ``GlasserProjector(selected_rois=DYNAMIC_ROIS)``.
+# https://blahner.github.io/BrainNetflixECCV/images/BrainGen_ECCV_2024_supplement.pdf
+DYNAMIC_ROIS: frozenset[str] = frozenset(
+    {
         "V1",
         "MST",
         "V6",
@@ -1407,31 +1536,245 @@ class FoscoProjector(BaseFmriProjector):
         "LO3",
         "VMV2",
         "VVC",
-    ]
+    }
+)
 
-    _mask: np.ndarray | None = pydantic.PrivateAttr(default=None)
 
-    def _get_mask(self) -> np.ndarray:
-        if self._mask is None:
-            import hcp_utils as hcp  # type: ignore[import-not-found]
+def _with_bare_roi_names(
+    hemi_nodes: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Add a bare (both-hemisphere) alias for every ``..._left``/``..._right`` name.
 
-            self._mask = np.isin(
-                hcp.mmp.map_all,
-                [
-                    k
-                    for k, v in hcp.mmp.labels.items()
-                    if (v.startswith("R_") or v.startswith("L_")) and v[2:] in self.ROIS
-                ],
-            )
-        return self._mask
+    Given a per-hemisphere ``name -> node indices`` map following the
+    ``_left``/``_right`` naming convention, return it augmented so that e.g.
+    ``"V1_left"`` and ``"V1_right"`` also yield a bare ``"V1"`` covering both.
+    Hemisphere-less names (e.g. ``"brainstem"``) are passed through unchanged.
+    """
+    bare: defaultdict[str, list[np.ndarray]] = defaultdict(list)
+    for name, idx in hemi_nodes.items():
+        if name.endswith(("_left", "_right")):
+            bare[name.rsplit("_", 1)[0]].append(idx)
+    return hemi_nodes | {b: np.sort(np.concatenate(a)) for b, a in bare.items()}
 
-    def apply(self, rec: tp.Any, **kwargs: tp.Any) -> np.ndarray:
-        data = rec.get_fdata()
-        if data.ndim != 2:
+
+class GlasserProjector(_RoiSubsetProjector):
+    """Subset HCP grayordinates or fsaverage vertices to Glasser ROIs.
+
+    Applies a spatial mask to keep only vertices belonging to the selected
+    Glasser ROIs from the HCP MMP1.0 parcellation.
+    CIFTI/HCP grayordinate inputs use the existing ``hcp_utils`` path;
+    fsaverage surface inputs use the MNE HCP-MMP annotation.  Expects 2-D input
+    of shape ``(nodes, time)``.
+
+    Important
+    ---------
+    This projector masks vertices/grayordinates; it does **not** aggregate each
+    ROI to a single time series.  The number of output features therefore
+    depends on the input space and resolution.  For example, the same ROI can
+    contain more vertices on fsaverage7 than grayordinates in HCP CIFTI space.
+
+    Parameters
+    ----------
+    selected_rois : set[str]
+        ROI names to keep. Use :meth:`available_rois` to list valid names, or
+        pass the :data:`DYNAMIC_ROIS` preset (41 visual areas).
+        A bare name (``"V1"``) selects both hemispheres; append ``_left``/
+        ``_right`` (``"V1_left"``) to select a single hemisphere.
+    mode : "drop" | "zero" | "mean"
+        ``"drop"`` returns only selected vertices/grayordinates. ``"zero"``
+        keeps the input shape and sets non-selected rows to zero. ``"mean"``
+        collapses each selected ROI to its mean, returning one row per ROI
+        (``(n_rois, time)``), ordered by ROI name (see :attr:`ordered_rois`).
+    subset_size : int | None
+        If set, randomly sample this many nodes from each selected ROI.
+    subset_seed : int
+        Random seed for subset sampling.
+
+    Examples
+    --------
+    >>> GlasserProjector(selected_rois={"V1", "V2", "V3", "V4"})
+    >>> GlasserProjector(selected_rois={"V1", "MT_left"})
+    >>> GlasserProjector(selected_rois=DYNAMIC_ROIS)
+    >>> GlasserProjector.available_rois()
+
+    Config usage::
+
+        "neuro": {
+            "name": "FmriExtractor",
+            "projection": {"name": "GlasserProjector", "selected_rois": ["V1", "V2"]},
+            "from_space": "fsLR",
+        }
+    """
+
+    _roi_noun: tp.ClassVar[str] = "Glasser ROIs"
+
+    @classmethod
+    def available_rois(cls) -> list[str]:
+        """Return accepted Glasser ROI names.
+
+        Returns the full HCP MMP1.0 cortical atlas, including bare bilateral
+        names and ``_left``/``_right`` hemisphere-specific names. Uses
+        ``hcp_utils`` when available and falls back to the MNE HCP-MMP
+        annotation.
+        """
+        try:
+            import hcp_utils  # noqa: F401  # availability probe; _cifti_roi_nodes re-imports
+        except ModuleNotFoundError:
+            return sorted(cls._fsaverage_roi_vertices())
+        return sorted(cls._cifti_roi_nodes())
+
+    @staticmethod
+    def _roi_name(label: str) -> str:
+        """Normalize an HCP-MMP label to its bare ROI name.
+
+        Handles both the ``hcp_utils`` convention (``L_V1``) and the MNE
+        annotation convention (``L_V1_ROI-lh``).
+        """
+        name = label.removesuffix("-lh").removesuffix("-rh").removesuffix("_ROI")
+        return name[2:] if name.startswith(("L_", "R_")) else name
+
+    @classmethod
+    def _hemi_roi_name(cls, label: str) -> str:
+        """``L_V1[_ROI-lh]`` -> ``"V1_left"``; ``R_V1[...]`` -> ``"V1_right"``."""
+        hemi = "left" if label.startswith("L_") else "right"
+        return f"{cls._roi_name(label)}_{hemi}"
+
+    @classmethod
+    def _fsaverage_roi_vertices(cls) -> dict[str, np.ndarray]:
+        """Map each ROI name (bare and ``_left``/``_right``) to fsaverage7 global
+        vertex indices.
+
+        Right-hemisphere vertices are offset by ``n_vertices`` so the indices
+        address the stacked ``(2 * n_vertices, time)`` surface. The MNE
+        background/unknown label (``???``) is excluded.
+        """
+        n_vertices = FSAVERAGE_SIZES["fsaverage7"]
+        hemi_nodes: dict[str, np.ndarray] = {}
+        for label in cls._read_mne_hcp_labels():
+            if cls._roi_name(label.name) == "???":
+                continue
+            vertices = np.asarray(label.vertices, dtype=int)
+            if label.hemi == "rh":
+                vertices = vertices + n_vertices
+            hemi_nodes[cls._hemi_roi_name(label.name)] = vertices
+        return _with_bare_roi_names(hemi_nodes)
+
+    @classmethod
+    def _read_mne_hcp_labels(cls) -> list[tp.Any]:
+        configured_dir = mne.get_config("SUBJECTS_DIR")
+        if configured_dir is not None:
+            subjects_dir = Path(configured_dir).expanduser()
+        else:
+            mne_data = mne.get_config("MNE_DATA", str(Path.home() / "mne_data"))
+            subjects_dir = Path(mne_data).expanduser() / "subjects"
+        if not (subjects_dir / "fsaverage").exists():
+            mne.datasets.fetch_fsaverage(subjects_dir=subjects_dir, verbose=True)
+        mne.datasets.fetch_hcp_mmp_parcellation(
+            subjects_dir=subjects_dir,
+            accept=True,
+            verbose=True,
+            combine=False,
+        )
+        return mne.read_labels_from_annot(
+            "fsaverage",
+            "HCPMMP1",
+            hemi="both",
+            subjects_dir=subjects_dir,
+        )
+
+    @classmethod
+    def _cifti_roi_nodes(cls) -> dict[str, np.ndarray]:
+        import hcp_utils as hcp
+
+        keys_by_name: defaultdict[str, list[int]] = defaultdict(list)
+        for key, label in hcp.mmp.labels.items():
+            # hcp.mmp.labels also includes background/subcortical labels;
+            # keep only cortical HCP-MMP parcels here.
+            if label.startswith(("R_", "L_")):
+                keys_by_name[cls._hemi_roi_name(label)].append(key)
+        hemi_nodes = {
+            name: np.nonzero(np.isin(hcp.mmp.map_all, keys))[0]
+            for name, keys in keys_by_name.items()
+        }
+        return _with_bare_roi_names(hemi_nodes)
+
+    def _roi_nodes(self, n_nodes: int) -> dict[str, np.ndarray]:
+        if n_nodes == 2 * FSAVERAGE_SIZES["fsaverage7"]:
+            return self._fsaverage_roi_vertices()
+        if n_nodes == HCP_CIFTI_91K_SIZE:
+            return self._cifti_roi_nodes()
+        raise ValueError(
+            "Unsupported GlasserProjector input with "
+            f"{n_nodes} nodes. Expected CIFTI/HCP grayordinates "
+            f"({HCP_CIFTI_91K_SIZE} nodes) or full fsaverage7 surface "
+            f"({2 * FSAVERAGE_SIZES['fsaverage7']} nodes)."
+        )
+
+
+class CiftiRoiProjector(_RoiSubsetProjector):
+    """Subset a CIFTI's grayordinates to Glasser cortical ROIs and/or subcortical
+    structures (via ``hcp_utils``).
+
+    CIFTI-only; expects 2-D ``(nodes, time)`` input.  Nodes are masked, not
+    aggregated, so the output feature count depends on the selection. Requires
+    ``hcp_utils`` for CIFTI structure definitions.
+
+    Parameters
+    ----------
+    selected_rois : set[str]
+        Any mix of Glasser cortical ROI names and subcortical structure names.
+        Both accept a bare name (``"V1"``/``"thalamus"`` = both hemispheres)
+        or a ``_left``/``_right`` suffix (``"V1_left"``, ``"thalamus_left"``); the
+        hemisphere-less ``"brainstem"`` is bare only.  See :meth:`available_rois`,
+        or pass the :data:`DYNAMIC_ROIS` cortical preset (41 visual areas).
+    mode : "drop" | "zero" | "mean"
+        ``"drop"`` returns only selected nodes; ``"zero"`` keeps the input shape
+        and zeroes non-selected rows; ``"mean"`` collapses each selected ROI to
+        its mean, returning one row per ROI (``(n_rois, time)``), ordered by ROI
+        name (see :attr:`ordered_rois`).
+    subset_size : int | None
+        If set, randomly sample this many nodes from each selected ROI.
+    subset_seed : int
+        Random seed for subset sampling.
+
+    Examples
+    --------
+    >>> CiftiRoiProjector(selected_rois={"V1", "thalamus_left"})
+    """
+
+    _roi_noun: tp.ClassVar[str] = "CIFTI regions"
+
+    @classmethod
+    def available_rois(cls) -> list[str]:
+        """All accepted region names: Glasser cortical ROIs and subcortical structures."""
+        return sorted(cls._cifti_nodes())
+
+    @classmethod
+    def _cifti_nodes(cls) -> dict[str, np.ndarray]:
+        """Merged Glasser cortical + subcortical node-index map (91k grayordinates)."""
+        import hcp_utils as hcp
+
+        skip = {"cortex_left", "cortex_right", "cortex", "subcortical", "all"}
+        all_idx = np.arange(HCP_CIFTI_91K_SIZE)
+        subcortical = {
+            key.lower(): all_idx[selector]  # e.g. "brainStem" -> "brainstem"
+            for key, selector in hcp.struct.items()
+            if key not in skip and not key.startswith("cortex")
+        }
+        return {
+            **GlasserProjector._cifti_roi_nodes(),
+            **_with_bare_roi_names(subcortical),
+        }
+
+    def _roi_nodes(self, n_nodes: int) -> dict[str, np.ndarray]:
+        if n_nodes != HCP_CIFTI_91K_SIZE:
             raise ValueError(
-                f"FoscoProjector expects 2D (nodes, time) data, got {data.ndim}D"
+                "CiftiRoiProjector requires CIFTI/HCP grayordinate input "
+                f"({HCP_CIFTI_91K_SIZE} nodes), got {n_nodes}. Subcortical "
+                "structures exist only in grayordinate space; for fsaverage "
+                "surfaces use GlasserProjector."
             )
-        return data[self._get_mask(), :]
+        return self._cifti_nodes()
 
 
 # ---------------------------------------------------------------------------
@@ -1479,13 +1822,23 @@ class FmriExtractor(BaseExtractor):
         Target sampling frequency.
     padding : int | ``"auto"`` | None
         Pad 1-D+T data to a uniform voxel count across subjects.
-    from_space : str | ``"auto"`` | None
-        Input space to load.  ``None`` (default) passes through when only
-        one space is present, raises when multiple are found.
-        ``"auto"`` uses a projection-aware heuristic.
-        An explicit string selects that space.
-    from_preproc : str | tuple[str, ...] | None
-        Filter events by preprocessing pipeline.
+    query : Query | None
+        Per-event predicate selecting which fMRI variant(s) to load, evaluated
+        directly on ``Fmri`` event objects. This is a deliberate subset of the
+        pandas ``QueryEvents`` dialect: it supports ``space``, ``preproc``, and
+        ``study`` string conditions with ``==``, ``!=``, ``in``, and ``not in``
+        combined with ``and``/``or``/``not``. Referenced names are validated at
+        construction, so typos fail fast — including in short-circuited
+        branches. For richer filters, use a
+        ``QueryEvents`` transform upstream.
+    from_space, from_preproc
+        Deprecated compatibility aliases for older configs. Prefer ``query``;
+        legacy selector fields remain in cache UIDs so old configs can keep
+        using their existing cache namespace while they migrate.
+        ``from_space="auto"`` additionally re-enables the deprecated
+        projection-aware space selection (SurfaceProjector prefers fsaverage,
+        GlasserProjector prefers fsLR, others prefer MNI); it has no ``query``
+        equivalent and will be removed in a future release.
     fwhm : float | None
         Full width at half maximum (in mm) for isotropic spatial smoothing
         via ``nilearn.image.smooth_img``. Applied after masking and before
@@ -1499,6 +1852,8 @@ class FmriExtractor(BaseExtractor):
     cleaning: FmriCleaner | None = FmriCleaner()
     frequency: tp.Literal["native"] | float = "native"
     padding: int | tp.Literal["auto"] | None = None
+    query: base.Query | None = None
+    _QUERY_FIELDS: tp.ClassVar[frozenset[str]] = frozenset({"space", "preproc", "study"})
     from_space: str | None = None
     from_preproc: str | tuple[str, ...] | None = None
     fwhm: float | None = None
@@ -1508,9 +1863,16 @@ class FmriExtractor(BaseExtractor):
         version="2",
     )
     _padding: int | None = None
+    _query_predicate: tp.Callable[[etypes.Event], bool] | None = pydantic.PrivateAttr(
+        default=None
+    )
+    _effective_query: str | None = pydantic.PrivateAttr(default=None)
+    _effective_auto_space: bool = pydantic.PrivateAttr(default=False)
 
     def model_post_init(self, log__: tp.Any) -> None:
         super().model_post_init(log__)
+        self._migrate_legacy_selectors()
+        self._get_query_predicate()
         if isinstance(self.padding, int):
             self._padding = self.padding
         if not self.projection and self.infra.folder is not None:
@@ -1521,97 +1883,139 @@ class FmriExtractor(BaseExtractor):
             )
 
     def _exclude_from_cache_uid(self) -> list[str]:
-        return super()._exclude_from_cache_uid() + ["offset", "padding"]
+        excluded = super()._exclude_from_cache_uid() + [
+            "offset",
+            "padding",
+            "query",
+        ]
+        if self.projection is not None:
+            excluded += [f"projection.{f}" for f in self.projection.after_cache_fields()]
+        return excluded
 
-    def _auto_filter_fmri_events(
-        self, fmri_events: list[etypes.Fmri]
-    ) -> list[etypes.Fmri]:
-        """Filter fMRI events by ``from_preproc``, ``from_space``, and ``projection``.
-
-        1. **Preproc filter** -- drop events not matching ``self.from_preproc``
-           (skipped when ``None``).
-        2. **Space selection**:
-
-           - Explicit string (e.g. ``"MNI152NLin2009cAsym"``) -- keep only
-             that space; raises if no events match.
-           - ``"auto"`` -- projection-aware heuristic: ``SurfaceProjector``
-             prefers fsaverage meshes, other projectors prefer MNI spaces.
-             Requires ``self.projection`` to be set.
-           - ``None`` (default) -- pass through if one space, raise if
-             multiple.
-        """
-        from_preproc = self.from_preproc
-        from_space = self.from_space
-        if isinstance(from_preproc, str):
-            from_preproc = (from_preproc,)
-        if from_preproc is not None:
-            available_preprocs = {e.preproc for e in fmri_events}
-            missing = set(from_preproc) - available_preprocs
-            if missing:
-                raise ValueError(
-                    f"from_preproc={missing} not found. Available: {available_preprocs}"
-                )
-            fmri_events = [e for e in fmri_events if e.preproc in from_preproc]
-        preproc_ctx = (
-            f" (after from_preproc={self.from_preproc!r} filter)"
-            if from_preproc is not None
-            else ""
-        )
-        spaces = {e.space for e in fmri_events}
-        if len(spaces) > 1 and from_space is None:
-            logger.warning(
-                "Multiple fMRI spaces found: %s. If you trigger list_segments "
-                "on Fmri events, each space produces a separate segment. "
-                "Filter with from_space or a QueryEvents transform "
-                "before segmentation to avoid duplicates.",
-                spaces,
+    def _migrate_legacy_selectors(self) -> None:
+        self._effective_query = self.query
+        if self.from_space is None and self.from_preproc is None:
+            return
+        if self.query is not None:
+            raise ValueError(
+                "Use either query or the deprecated from_space/from_preproc, not both"
             )
-        if isinstance(from_space, str) and from_space != "auto":
-            filtered = [e for e in fmri_events if e.space == from_space]
-            if not filtered:
-                raise ValueError(
-                    f"from_space={from_space!r} matched no events. "
-                    f"Available spaces: {spaces}{preproc_ctx}"
-                )
-            return filtered
+        parts = []
+        if self.from_preproc is not None:
+            preprocs = (
+                (self.from_preproc,)
+                if isinstance(self.from_preproc, str)
+                else self.from_preproc
+            )
+            if not preprocs:
+                raise ValueError("from_preproc must not be empty")
+            parts.append(
+                f"preproc == {preprocs[0]!r}"
+                if len(preprocs) == 1
+                else f"preproc in {list(preprocs)!r}"
+            )
+        if self.from_space == "auto":
+            self._effective_auto_space = True
+        elif self.from_space is not None:
+            parts.append(f"space == {self.from_space!r}")
+        if parts:
+            self._effective_query = " and ".join(parts)
+        if self._effective_auto_space:
+            warnings.warn(
+                "FmriExtractor auto space selection (from_space='auto') is "
+                "deprecated and will be removed in a future release; set query to "
+                "select an explicit space instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        if parts:
+            warnings.warn(
+                "FmriExtractor.from_space/from_preproc are deprecated; "
+                "use query instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+
+    def _get_query_predicate(self) -> tp.Callable[[etypes.Event], bool] | None:
+        if self._effective_query is None:
+            self._query_predicate = None
+            return None
+        if self._query_predicate is None:
+            self._query_predicate = eventquery.compile_event_query(
+                self._effective_query, fields=self._QUERY_FIELDS
+            )
+        return self._query_predicate
+
+    def _filter_fmri_events(self, fmri_events: list[etypes.Fmri]) -> list[etypes.Fmri]:
+        """Apply ``query``, then deprecated ``from_space='auto'`` space selection."""
+        candidates = fmri_events
+        available_spaces = {e.space for e in candidates}
+        available_preprocs = {e.preproc for e in candidates}
+        predicate = self._get_query_predicate()
+        if predicate is not None:
+            fmri_events = [e for e in fmri_events if predicate(e)]
+        if candidates and not fmri_events:
+            query_ctx = f"query={self._effective_query!r} matched no fMRI events. "
+            raise ValueError(
+                f"{query_ctx}Available spaces: {available_spaces}; "
+                f"available preprocs: {available_preprocs}"
+            )
+        spaces = {e.space for e in fmri_events}
         if len(spaces) <= 1:
             return fmri_events
-        if from_space is None:
+        if not self._effective_auto_space:
             raise ValueError(
-                f"Multiple spaces found ({spaces}), set from_space explicitly "
-                "or use from_space='auto'"
+                f"Multiple spaces found ({spaces}), set FmriExtractor.query "
+                "to select a single space explicitly"
             )
-        # from_space == "auto": projection-aware heuristic
+        # deprecated from_space='auto': projection-aware heuristic
         if self.projection is None:
             raise ValueError(
                 f"from_space='auto' requires a projection to choose among "
-                f"{spaces}. Set from_space to an explicit space name, or "
-                "configure a projection."
+                f"{spaces}. Set query to select an explicit space, or configure "
+                "a projection."
             )
         fs = "fsaverage"
         if isinstance(
             self.projection, SurfaceProjector
         ) and self.projection.mesh.startswith(fs):
-            candidates = [f"{fs}{n}" for n in range(3, 8)] + [fs]
+            candidate_spaces = [f"{fs}{n}" for n in range(3, 8)] + [fs]
+        elif isinstance(self.projection, GlasserProjector):
+            candidate_spaces = [
+                "fsLR",
+                "fsaverage",
+                "fsaverage7",
+            ]
+        elif isinstance(self.projection, CiftiRoiProjector):
+            # CIFTI-only: subcortical structures exist only in grayordinate space.
+            candidate_spaces = ["fsLR"]
         else:
-            candidates = ["MNI152NLin2009cAsym"] + [s for s in spaces if "MNI" in s]
-        best = next((c for c in candidates if c in spaces), None)
+            candidate_spaces = ["MNI152NLin2009cAsym"] + [s for s in spaces if "MNI" in s]
+        best = next((c for c in candidate_spaces if c in spaces), None)
         if best is None:
             raise ValueError(
                 f"No matching space for projection={self.projection!r} among "
-                f"{spaces}. Set from_space to an explicit space name."
+                f"{spaces}. Set query to select an explicit space."
             )
         return [e for e in fmri_events if e.space == best]
 
     def prepare(self, obj: DataframeOrEventsOrSegments) -> None:
         all_events: list[etypes.Fmri] = self._event_types_helper.extract(obj)  # type: ignore[assignment]
-        events = self._auto_filter_fmri_events(all_events)
+        events = self._filter_fmri_events(all_events)
         if self.padding == "auto":
             # for padding, we first need everything to be preprocessed
             # but we need on an object without padding since missing_default filling
             # will apply the extractor on 1 event, and we'll need the padding length for that
             self.infra.clone_obj(padding=None).prepare(events)
-            self._padding = max(ta.data.shape[0] for ta in self._get_data(events))  # type: ignore
+            feature_counts = (
+                (
+                    self.projection.apply_after_cache(ta.data)
+                    if self.projection is not None
+                    else ta.data
+                ).shape[0]
+                for ta in self._get_data(events)  # type: ignore
+            )
+            self._padding = max(feature_counts)
             # (recompute prepare to just fill the missing default value)
         super().prepare(events)
 
@@ -1659,8 +2063,8 @@ class FmriExtractor(BaseExtractor):
         start: float,
         duration: float,
     ) -> list[etypes.Event]:
-        """Filter Fmri events by preproc/space, then delegate aggregation to base."""
-        fmri_events = self._auto_filter_fmri_events(
+        """Filter Fmri events by query/space, then delegate aggregation to base."""
+        fmri_events = self._filter_fmri_events(
             self._event_types_helper.extract(events),  # type: ignore[arg-type]
         )
         return super()._get_relevant_events(
@@ -1692,7 +2096,7 @@ class FmriExtractor(BaseExtractor):
             if isinstance(self.projection, SurfaceProjector):
                 header["space"] = self.projection.mesh
         else:
-            data = rec.get_fdata()
+            data = rec.get_fdata(dtype=np.float32)
             if space_dims == 3:
                 header["affine"] = np.array(rec.affine, dtype=np.float64)
 
@@ -1710,7 +2114,7 @@ class FmriExtractor(BaseExtractor):
         return FmriTimedArray(
             data=data.astype(np.float32),
             frequency=freq,
-            start=event.start,
+            start=base._UNSET_START,
             duration=event.duration,
             header=header,
         )
@@ -1728,24 +2132,21 @@ class FmriExtractor(BaseExtractor):
     ) -> tp.Iterable[TimedArray]:
         if self.padding == "auto" and self._padding is None:
             raise RuntimeError("Fmri.prepare needs to be called to compute auto padding")
-        for _event, ta in zip(events, self._get_data(events)):
-            data = ta.data
+        for event, ta in zip(events, self._get_data(events)):
+            out = ta.copy(start=event.start - self.offset)
+            # memmap I/O: time-crop before row-mask projection
+            out = out.overlap(start, duration)
+            if self.projection is not None:
+                out.data = self.projection.apply_after_cache(out.data)
             if self._padding is not None:
-                if data.ndim != 2:
-                    raise ValueError(f"Only 1D+T FMRI can be padded, got {data.shape=}")
-                padding = self._padding - data.shape[0]
-                if padding < 0:
-                    raise ValueError(
-                        f"Padding to length {self._padding} but got {data.shape=}"
-                    )
-                data = np.pad(data, [(0, self._padding - data.shape[0]), (0, 0)])
-            yield FmriTimedArray(
-                data=data,
-                frequency=ta.frequency,
-                start=ta.start - self.offset,
-                duration=ta.duration,
-                header=ta.header,
-            )
+                shape = out.data.shape
+                if out.data.ndim != 2:
+                    raise ValueError(f"Only 1D+T FMRI can be padded, got {shape=}")
+                pad = self._padding - shape[0]
+                if pad < 0:
+                    raise ValueError(f"Padding to {self._padding} but got {shape=}")
+                out.data = np.pad(out.data, [(0, pad), (0, 0)])
+            yield out
 
 
 class ChannelPositions(BaseStatic):

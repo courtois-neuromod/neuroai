@@ -89,7 +89,7 @@ class Nieuwland2018Large(study.Study):
         "EEG recordings from 334 participants across 9 laboratories reading sentences in "
         "RSVP to test phonological predictions."
     )
-    requirements: tp.ClassVar[tuple[str, ...]] = ("openpyxl",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("python-calamine",)
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
         num_timelines=335,
         num_subjects=295,
@@ -99,11 +99,13 @@ class Nieuwland2018Large(study.Study):
         frequency=500,
     )
 
-    def _download(self) -> None:
+    def _download(self, overwrite: bool = False) -> None:
         with download.success_writer(self.path / "download_all") as already_done:
-            if already_done:
+            if already_done and not overwrite:
                 return
-            download.Osf(study="eyzaq", dset_dir=self.path, folder="download").download()
+            download.Osf(study="eyzaq", dset_dir=self.path, folder="download").download(
+                overwrite=overwrite
+            )
             _preproc_stimuli(self.path)
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
@@ -123,7 +125,7 @@ class Nieuwland2018Large(study.Study):
             dict(task=timeline["task"]) if timeline.get("task") is not None else dict()
         )
         raw = site._load_raw(subject=timeline["site_subject"], **kwargs)
-        raw.pick_types(eeg=True, stim=True)
+        raw.pick(["eeg", "stim"])
         if raw.get_montage() is None:
             montage = mne.channels.make_standard_montage("standard_1005")
             raw.set_montage(montage)
@@ -207,7 +209,7 @@ def _preproc_stimuli(path: str):
     path_preprocessed = Path(path) / "prepare"
     stim_dir = path_preprocessed / "stimuli"
     stim_dir.mkdir(exist_ok=True, parents=True)
-    zip_file = path_download / "osfstorage" / "Stimuli" / "Stimuli.zip"
+    zip_file = path_download / "Stimuli" / "Stimuli.zip"
     xls_file = stim_dir / "replication_items.xlsx"
 
     if not xls_file.exists():
@@ -216,8 +218,13 @@ def _preproc_stimuli(path: str):
                 xls = archive.read("Stimuli/Sentence Materials/REPLICATION_ITEMS.xlsx")
                 f.write(xls)
 
-    delong = pd.read_excel(xls_file, sheet_name="Delong_Replication")
-    control = pd.read_excel(xls_file, sheet_name="Control_experiment")
+    sheets = pd.read_excel(
+        xls_file,
+        sheet_name=["Delong_Replication", "Control_experiment"],
+        engine="calamine",
+    )
+    delong = sheets["Delong_Replication"]
+    control = sheets["Control_experiment"]
 
     def badchar(string):
         for k in " :,=.":

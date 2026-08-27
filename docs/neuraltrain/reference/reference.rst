@@ -127,15 +127,6 @@ Use ``models.EEGNet(kwargs={...})`` — see :doc:`../install` for an example.
    Linear
    LinearModel
 
-.. currentmodule:: neuraltrain.models.dummy_predictor
-
-.. autosummary::
-   :toctree: generated/
-   :nosignatures:
-
-   DummyPredictor
-   DummyPredictorModel
-
 .. currentmodule:: neuraltrain.models.fmri_mlp
 
 .. autosummary::
@@ -252,6 +243,7 @@ Metrics
    TopkAccFromScores
    ImageSimilarity
    GroupedMetric
+   CharacterErrorRates
 
 Augmentations
 -------------

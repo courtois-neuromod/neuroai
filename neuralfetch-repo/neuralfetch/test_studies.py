@@ -7,6 +7,7 @@
 """Tests for neuralfetch: study discovery and study info validation."""
 
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 
@@ -16,11 +17,77 @@ import requests
 from scipy.io import loadmat
 
 import neuralset as ns
+from neuralfetch import download as _download_mod
 from neuralfetch import utils
 from neuralfetch.studies.moabb2025 import Reichert2020Impact
 from neuralset.events import study as _study_mod
 
 INFO_STUDIES = [n for n, c in ns.Study.catalog().items() if c._info is not None]
+
+
+def _accepts_overwrite(func: object) -> bool:
+    """True if *func* can be called with an ``overwrite=`` keyword."""
+    params = inspect.signature(func).parameters  # type: ignore[arg-type]
+    if "overwrite" in params:
+        return True
+    return any(p.kind is p.VAR_KEYWORD for p in params.values())
+
+
+def test_all_neuralfetch_studies_accept_overwrite() -> None:
+    """Every neuralfetch study's ``_download`` must accept ``overwrite=``.
+
+    ``Study.download(**kwargs)`` forwards ``overwrite`` verbatim to
+    ``_download``; a study missing the parameter makes ``neuralfetch download
+    <Study>`` raise ``TypeError`` on every invocation (even without the flag,
+    since the CLI always passes ``overwrite=``). This is the anti-regression
+    guard for that contract.
+    """
+    checked = 0
+    failures: list[str] = []
+    for name, cls in sorted(ns.Study.catalog().items()):
+        module = getattr(cls, "__module__", "")
+        if not module.startswith("neuralfetch."):
+            continue
+        checked += 1
+        if not _accepts_overwrite(cls._download):
+            sig = inspect.signature(cls._download)
+            failures.append(f"{name} ({module}): _download{sig}")
+
+    assert checked, "no neuralfetch studies were discovered"
+    assert not failures, (
+        "these neuralfetch studies' _download() cannot accept overwrite=, so "
+        "`neuralfetch download <Study>` would raise TypeError:\n  "
+        + "\n  ".join(failures)
+    )
+
+
+def test_all_download_backends_accept_overwrite() -> None:
+    """Every ``BaseDownload`` backend's ``_download`` must accept ``overwrite=``.
+
+    ``BaseDownload.download(overwrite)`` forwards the flag into ``_download``;
+    a backend missing the parameter would raise ``TypeError`` as soon as it is
+    used with the two-tier overwrite semantics.
+    """
+
+    def _all_subclasses(cls: type) -> set[type]:
+        subs = set(cls.__subclasses__())
+        for sub in list(subs):
+            subs |= _all_subclasses(sub)
+        return subs
+
+    failures: list[str] = []
+    for cls in sorted(
+        _all_subclasses(_download_mod.BaseDownload), key=lambda c: c.__name__
+    ):
+        download_fn = cls._download  # type: ignore[attr-defined]
+        if not _accepts_overwrite(download_fn):
+            sig = inspect.signature(download_fn)
+            failures.append(f"{cls.__name__}: _download{sig}")
+
+    assert not failures, (
+        "these download backends' _download() cannot accept overwrite=:\n  "
+        + "\n  ".join(failures)
+    )
 
 
 def test_neuralfetch_discovery() -> None:
@@ -34,6 +101,29 @@ def test_neuralfetch_discovery() -> None:
         "neuralfetch is installed but no studies were discovered. "
         "Check the neuralset.studies entry point in pyproject.toml."
     )
+
+
+def test_physionet_study_download_root(tmp_path: Path) -> None:
+    """A Physionet-backed study should resolve files under download/<study>/<version>/."""
+    from neuralfetch.studies.zyma2019electroencephalograms import (
+        Zyma2019Electroencephalograms,
+    )
+
+    study = Zyma2019Electroencephalograms(path=tmp_path)
+    # model_post_init appends the study subfolder to the generic root, then the
+    # Physionet backend nests data under download/<study>/<version>/.
+    expected_root = (
+        tmp_path
+        / "Zyma2019Electroencephalograms"
+        / "download"
+        / study._PHYSIONET_STUDY  # noqa: SLF001
+        / study._PHYSIONET_VERSION  # noqa: SLF001
+    )
+
+    assert study._download_root() == expected_root  # noqa: SLF001
+    assert study._get_eeg_filename(  # noqa: SLF001
+        {"subject": "Subject01", "run": "1"}
+    ) == (expected_root / "Subject01_1.edf")
 
 
 @pytest.mark.parametrize("name", INFO_STUDIES)
@@ -53,9 +143,9 @@ def test_study_info(name: str, tmp_path: Path) -> None:
     if not folder.exists():
         pytest.skip(f"Missing folder {folder} for study {name}")
     study = _study_mod.STUDIES[name](path=folder)
-    if study.path == folder and folder.name.lower() != name.lower():
-        # path was not updated from generic to study-specific
-        pytest.skip(f"Study data not found for {name} in {folder}")
+    if not study.path.exists():
+        # the study-specific subfolder (resolved in model_post_init) has no data
+        pytest.skip(f"Study data not found for {name} in {study.path}")
     assert study._info is not None
     try:
         actual = utils.compute_study_info(name, folder)
@@ -185,3 +275,21 @@ def test_update_source_info(tmp_path: Path) -> None:
     finally:
         _study_mod.STUDIES.pop("DummyUpdateTest2099", None)
         sys.modules.pop("dummy_study", None)
+
+
+def test_brennan2019_timeline_count(tmp_path: Path) -> None:
+    """Brennan2019Hierarchical must enumerate exactly its 33 declared subjects.
+
+    ``iter_timelines`` is pure subject-set arithmetic (no disk access), so this
+    guards the count against drifting from ``_info.num_timelines`` without
+    needing the dataset.  Six in-range subjects ship no timelock-preprocessing
+    ``.mat`` file and must stay excluded.
+    """
+    from neuralfetch.studies.brennan2019hierarchical import Brennan2019Hierarchical
+
+    study = Brennan2019Hierarchical(path=tmp_path)
+    timelines = list(study.iter_timelines())
+    assert len(timelines) == study._info.num_timelines == 33  # noqa: SLF001
+    subjects = {t["subject"] for t in timelines}
+    no_proc = {"S28", "S29", "S31", "S33", "S46", "S47", "S49"}
+    assert subjects.isdisjoint(no_proc)

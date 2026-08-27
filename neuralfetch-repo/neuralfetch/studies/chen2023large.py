@@ -84,7 +84,7 @@ class Chen2023Large(study.Study):
     description: tp.ClassVar[str] = """
         EEG recordings for 123 participants while viewing 28 video clips targeting nine categories of emotion
     """
-    requirements: tp.ClassVar[tuple[str, ...]] = ("openxl",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("python-calamine",)
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
         num_timelines=123,
         num_subjects=123,
@@ -94,7 +94,7 @@ class Chen2023Large(study.Study):
         frequency=1000,
     )
 
-    def _download(self) -> None:
+    def _download(self, overwrite: bool = False) -> None:
         """Data can also be downloaded manually after login at:
         https://www.synapse.org/Synapse:syn50614194
         """
@@ -102,7 +102,7 @@ class Chen2023Large(study.Study):
             study="Chen2023Large",
             study_id="syn50614194",
             dset_dir=self.path,
-        ).download()
+        ).download(overwrite=overwrite)
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         for subj_ind in range(123):
@@ -225,7 +225,7 @@ class Chen2023Large(study.Study):
     @cached_property
     def _stimulus_info(self) -> pd.DataFrame:
         stim_df = pd.read_excel(
-            self._get_filename("stimuli_info", {"": ""}), skipfooter=6
+            self._get_filename("stimuli_info", {"": ""}), skipfooter=6, engine="calamine"
         )
         rename_cols = {
             "Video index": "video_index",

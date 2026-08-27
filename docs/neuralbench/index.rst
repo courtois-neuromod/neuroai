@@ -117,6 +117,15 @@ comparison figures and tables from the stored results (no retraining):
       Reproduce the NeurIPS 2025 challenge tasks (cross-task reaction
       time and externalizing-factor prediction) with NeuralBench.
 
+   .. grid-item-card:: :fas:`trophy` EEG/EMG Foundation Challenge 2026
+      :link: auto_examples/biosignal_challenge_2026/plot_overview
+      :link-type: doc
+      :class-card: sd-shadow-sm
+
+      Starter kit for the proposed 2026 multi-track challenge:
+      EEG-to-Image, BCI, sleep onset, EMG-to-Text, and Foundation
+      Transfer.
+
 ----
 
 Running the full EEG benchmark
@@ -165,21 +174,21 @@ Citation
 --------
 
 If you use NeuralBench in your research, please cite the
-`NeuralBench white paper <https://ai.meta.com/research/publications/neuralbench-a-unifying-framework-to-benchmark-neuroai-models/>`_:
+`NeuralBench white paper <https://arxiv.org/abs/2605.08495>`_:
 
 .. code-block:: bibtex
 
-   @misc{banville2026neuralbench,
-     title        = {NeuralBench: A Unifying Framework to Benchmark NeuroAI Models},
-     author       = {Banville, Hubert and d'Ascoli, St{\'e}phane and Dahan, Simon
-                     and Rapin, J{\'e}r{\'e}my and Careil, Marl{\`e}ne
-                     and Benchetrit, Yohann and L{\'e}vy, Jarod
-                     and Panchavati, Saarang and Ratouchniak, Antoine
-                     and Zhang, Mingfang and Cascardi, Elisa and Begany, Katelyn
-                     and Brooks, Teon and King, Jean-R{\'e}mi},
-     year         = {2026},
-     howpublished = {Brain \& AI team, Meta FAIR},
-     url          = {https://ai.meta.com/research/publications/neuralbench-a-unifying-framework-to-benchmark-neuroai-models/},
+   @article{banville2026neuralbench,
+     title   = {NeuralBench: A Unifying Framework to Benchmark NeuroAI Models},
+     author  = {Banville, Hubert and d'Ascoli, St{\'e}phane and Dahan, Simon
+                and Rapin, J{\'e}r{\'e}my and Careil, Marl{\`e}ne
+                and Benchetrit, Yohann and L{\'e}vy, Jarod
+                and Panchavati, Saarang and Ratouchniak, Antoine
+                and Zhang, Mingfang and Cascardi, Elisa and Begany, Katelyn
+                and Brooks, Teon and King, Jean-R{\'e}mi},
+     year    = {2026},
+     journal = {arXiv preprint arXiv:2605.08495},
+     url     = {https://arxiv.org/abs/2605.08495},
    }
 
 ----
@@ -202,6 +211,7 @@ If you use NeuralBench in your research, please cite the
    auto_examples/adding_model/index
    auto_examples/advanced/index
    auto_examples/eeg_challenge/index
+   auto_examples/biosignal_challenge_2026/index
 
 .. toctree::
     :maxdepth: 3

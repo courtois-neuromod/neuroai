@@ -459,7 +459,7 @@ class SegmentDataset(torch.utils.data.Dataset[Batch], SegmentsMixin):
         )
 
 
-class Segmenter(base.BaseModel):
+class Segmenter(base.Step):
     """Build a :class:`SegmentDataset` from an events DataFrame and extractors.
 
     Parameters
@@ -530,6 +530,9 @@ class Segmenter(base.BaseModel):
         if self.trigger_query is None and self.stride is None:
             raise ValueError("At least one of trigger_query or stride must be provided.")
 
+    def _run(self, events: pd.DataFrame) -> SegmentDataset:
+        return self.apply(events)
+
     def apply(self, events: pd.DataFrame) -> SegmentDataset:
         # Segment the events based on stride and/or triggers
         if self.trigger_query is not None:
@@ -595,13 +598,15 @@ def _remove_incomplete_segments(
     # Identify problematic segments
     invalid_indices: set[int] = set()
     for event_type, extracts in event_types.items():
+        required = any(not f.allow_missing for f in extracts)
+        # safe to skip slow scan
+        if not drop_incomplete and not required:
+            continue
+
         # Find segments that don't have this event type
         invalids = find_incomplete_segments(segments, [event_type])
 
         if invalids:
-            # Checks whether the extractor authorize missing event
-            required = any([not f.allow_missing for f in extracts])
-
             # Raise error if extractor requires this event type
             msg = f"{len(invalids)} segments are missing events of type {event_type.__name__}."
             if not drop_incomplete and required:

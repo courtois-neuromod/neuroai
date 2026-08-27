@@ -60,6 +60,7 @@ from pathlib import Path
 import mne
 import numpy as np
 import pandas as pd
+from exca.steps import backends
 from scipy.io import loadmat
 
 from neuralfetch.download import temp_mne_data
@@ -192,14 +193,12 @@ class _BaseMoabb(studies.Study):
         # It will transform /path -> /path/StudyName
         super().model_post_init(log__)
 
-        # Disable the processpool for MOABB datasets: some (e.g. ERP CORE)
+        # Force inline timeline loading for MOABB datasets: some (e.g. ERP CORE)
         # load via mne_bids which uses file locks that exhaust NFS NLM limits
         # when too many workers run in parallel (ENOLCK).  Timeline events are
         # cached on disk by exca, so sequential loading only costs on first run.
-        if self.infra_timelines.cluster == "processpool":
-            self.infra_timelines = self.infra_timelines.model_copy(
-                update={"cluster": None}
-            )
+        if isinstance(self.timelines.infra, backends.ProcessPool):
+            self.timelines.infra = self.timelines.infra.derive("Cached")
 
         # Now insert 'moabb' before the study name
         # self.path is now /path/StudyName, we want /path/moabb/StudyName
@@ -232,18 +231,21 @@ class _BaseMoabb(studies.Study):
         return df
 
     # Populate subclass-level metadata
-    def _download(self) -> None:
+    def _download(self, overwrite: bool = False) -> None:
         """
         Download MoABB dataset and write timelines as a csv.
 
         (Timelines needed to avoid 'moabb.datasets.studies.get_data()' in self.iter_timelines, which loads ALL raw data.)
 
+        With ``overwrite`` the manifest is rebuilt even if it already exists;
+        forcing moabb to re-fetch the raw cache is best-effort and delegated to
+        the upstream client.
         """
         from moabb.datasets.base import CacheConfig
 
         timeline_path = Path(self.path) / "timelines.csv"
 
-        if not timeline_path.exists():
+        if overwrite or not timeline_path.exists():
             dl_path = Path(self.path) / "download"
             try:
                 dl_path.mkdir(exist_ok=True, parents=True)
@@ -3200,10 +3202,10 @@ class Romani2025Brainform(_BaseMoabb):
         labels = [s for s in labels if s not in self._EXCLUDE_SUBJECTS]
         return {i: s for i, s in enumerate(labels)}
 
-    def _download(self) -> None:
+    def _download(self, overwrite: bool = False) -> None:
         """Build timelines.csv by scanning BIDS directory (no mne_bids needed)."""
         timeline_path = Path(self.path) / "timelines.csv"
-        if timeline_path.exists():
+        if timeline_path.exists() and not overwrite:
             return
 
         bids = self._bids_root()
@@ -3354,7 +3356,7 @@ class Schaeff2012Exploring(_BaseMoabb):
     )
 
 
-# Suffixed to avoid collision with hand-written Schalk2004Bci2000 in schalk2004bci.py
+# Suffixed to avoid collision with hand-written Schalk2004Bci2000 in schalk2004bci2000.py
 class Schalk2004Bci2000Moabb(_BaseMoabb):
     """Subset of MOABB: PhysionetMI.
 

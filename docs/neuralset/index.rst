@@ -16,52 +16,20 @@ extraction) can be pre-installed with:
 
 .. code-block:: bash
 
-  pip install neuralset[all]
+  pip install 'neuralset[all]'
 
 see :doc:`Installation <install>` for the full breakdown.
 
 ----
 
-Quick start
-----------
-
-Pick an example to see the code. Copy the setup commands into your
-terminal first, then run the Python snippet. The first time you run it,
-it will be slow (data downloading, cache preparation, etc.) — but then
-lightning fast, even as you change parameters (e.g. segment duration).
+Examples
+--------
 
 .. raw:: html
 
-   <div class="code-selector" data-quickstart="true">
-
-     <div class="selector-compact">
-       <label class="selector-item">
-         <span class="selector-label">📋 Example</span>
-         <select id="sel-preset">
-           <option value="bel-language" selected>🗣️ Language + MEG</option>
-           <option value="li2022-language">🗣️ Language + fMRI</option>
-           <option value="grootswagers-image">🖼️ Image + EEG</option>
-           <option value="allen-image">🖼️ Image + fMRI</option>
-           <option value="fake-classif">🏷️ Classification + fMRI</option>
-         </select>
-       </label>
-     </div>
-
-     <div class="code-block-wrapper">
-       <div class="code-block-label">
-         <i class="fas fa-download"></i> Setup (run once in your terminal)
-       </div>
-       <pre><code id="code-install" class="language-bash"></code></pre>
-     </div>
-
-     <div class="code-block-wrapper">
-       <div class="code-block-label">
-         <i class="fas fa-database"></i> Load study data, configure extractors & segment
-       </div>
-       <pre><code id="code-data" class="language-python"></code></pre>
-     </div>
-
-   </div>
+   <div class="qs-builder"
+        data-axes="neuro,stim,task,model,compute"
+        data-defaults="neuro=fmri,stim=image,task=decoding,model=ridge,compute=local"></div>
 
 ----
 
@@ -214,23 +182,26 @@ Each tutorial walks through one building block of the NeuralSet pipeline.
 Citation
 --------
 
-.. code-block:: text
+If you use NeuralSet in your research, please cite the
+`NeuralSet paper <https://arxiv.org/abs/2605.03169>`_:
 
-   @misc{king2026neuralset,
-     title  = {NeuralSet: A High-Performing Python Package for Neuro-AI},
-     author = {King, Jean-R{\'e}mi and Bel, Corentin and Evanson, Linnea
-               and Gadonneix, Julien and Houhamdi, Sophia and L{\'e}vy, Jarod
-               and Raugel, Josephine and Santos Revilla, Andrea
-               and Zhang, Mingfang and Bonnaire, Julie and Caucheteux, Charlotte
-               and D{\'e}fossez, Alexandre and Desbordes, Th{\'e}o
-               and Diego-Sim{\'o}n, Pablo and Khanna, Shubh and Millet, Juliette
-               and Orhan, Pierre and Panchavati, Saarang and Ratouchniak, Antoine
-               and Thual, Alexis and Brooks, Teon L. and Begany, Katelyn
-               and Benchetrit, Yohann and Careil, Marl{\`e}ne and Banville, Hubert
-               and d'Ascoli, St{\'e}phane and Dahan, Simon and Rapin, J{\'e}r{\'e}my},
-     year   = {2026},
-     url    = {https://kingjr.github.io/files/neuralset.pdf},
-     note   = {Preprint; URL will be updated when the paper lands on arXiv}
+.. code-block:: bibtex
+
+   @article{king2026neuralset,
+     title   = {NeuralSet: A High-Performing Python Package for Neuro-AI},
+     author  = {King, Jean-R{\'e}mi and Bel, Corentin and Evanson, Linnea
+                and Gadonneix, Julien and Houhamdi, Sophia and L{\'e}vy, Jarod
+                and Raugel, Josephine and Santos Revilla, Andrea
+                and Zhang, Mingfang and Bonnaire, Julie and Caucheteux, Charlotte
+                and D{\'e}fossez, Alexandre and Desbordes, Th{\'e}o
+                and Diego-Sim{\'o}n, Pablo and Khanna, Shubh and Millet, Juliette
+                and Orhan, Pierre and Panchavati, Saarang and Ratouchniak, Antoine
+                and Thual, Alexis and Brooks, Teon L. and Begany, Katelyn
+                and Benchetrit, Yohann and Careil, Marl{\`e}ne and Banville, Hubert
+                and d'Ascoli, St{\'e}phane and Dahan, Simon and Rapin, J{\'e}r{\'e}my},
+     year    = {2026},
+     journal = {arXiv preprint arXiv:2605.03169},
+     url     = {https://arxiv.org/abs/2605.03169},
    }
 
 .. toctree::
@@ -239,9 +210,9 @@ Citation
    :caption: NeuralSet
 
    Installation <install>
+   Examples <code_builder>
    Tutorials <auto_examples/walkthrough/index>
    Caching & Cluster Execution <caching_and_cluster>
-   Encoding & Decoding <encoding_decoding>
 
 .. toctree::
    :maxdepth: 1

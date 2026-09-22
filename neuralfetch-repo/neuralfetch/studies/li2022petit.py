@@ -88,7 +88,7 @@ class Li2022Petit(study.Study):
         "listening to 'The Little Prince' audiobook in their native language "
         "(French, English, Chinese)."
     )
-    requirements: tp.ClassVar[tuple[str, ...]] = ("openneuro-py", "praatio")
+    requirements: tp.ClassVar[tuple[str, ...]] = ("praatio",)
     dataset_id: tp.ClassVar[str] = "ds003643"
     TR_FMRI_S: tp.ClassVar[float] = 2.0
 
@@ -176,19 +176,20 @@ class Li2022Petit(study.Study):
         wordseq: list[dict[str, tp.Any]] = []
         duplicated = "it the this that i i. they we he she you now and but so there five twenty phew good".split()
         for interval in tg.getTier(keys[0]).entries:
-            if interval.label.strip() in ("", "#", "sil"):
+            # praatio hands back the raw label, and some intervals are padded
+            # (e.g. " of" in lppEN_section1); strip once so the skip test, the
+            # merge test and the emitted text all agree.
+            label = interval.label.strip()
+            if label in ("", "#", "sil"):
                 continue
             # duplicated words happen a lot (when missing new sentence character), merge them
-            if interval.label in duplicated and wordseq:
-                if wordseq[-1]["text"] == interval.label:
+            if label in duplicated and wordseq:
+                if wordseq[-1]["text"] == label:
                     wordseq[-1]["duration"] = interval.end - wordseq[-1]["start"]
                     continue
             # add word
             text = (
-                repl.get(interval.label, interval.label)
-                .replace("`", "'")
-                .replace("«", "")
-                .replace("»", "")
+                repl.get(label, label).replace("`", "'").replace("«", "").replace("»", "")
             )
             if not text:
                 continue

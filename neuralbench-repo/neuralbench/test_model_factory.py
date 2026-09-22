@@ -26,6 +26,60 @@ class _Passthrough(BaseBrainModelConfig):
         return nn.Identity()
 
 
+_RECORDED_N_OUTPUTS: list[int | None] = []
+
+
+class _RecordHeadWidth(BaseBrainModelConfig):
+    """Config recording the head width the factory derives from the target."""
+
+    def build(self, n_spatial_locations: int, n_outputs: int | None = None) -> nn.Module:
+        _RECORDED_N_OUTPUTS.append(n_outputs)
+        return nn.Identity()
+
+
+class _NameReader(nn.Module):
+    """Model reading channel identity by name, as LaBraM does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[str] | None = None
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        channel_positions: torch.Tensor | None = None,
+        ch_names: list[str] | None = None,
+    ) -> torch.Tensor:
+        self.seen = ch_names
+        return x
+
+
+class _NameReaderConfig(BaseBrainModelConfig):
+    """Config building a model whose ``forward`` names ``ch_names``."""
+
+    def build(self, n_spatial_locations: int, n_outputs: int | None = None) -> nn.Module:
+        return _NameReader()
+
+
+def test_build_brain_model_names_channels_for_a_model_that_reads_them(
+    build_data: Callable[..., Data],
+) -> None:
+    loader = build_data(seed=0).prepare()["train"]
+    ch_names = list(loader.dataset.extractors["neuro"]._channels.keys())  # type: ignore[attr-defined]
+
+    model, _, _, returned = build_brain_model(
+        brain_model_config=_NameReaderConfig(),
+        downstream_model_wrapper=None,
+        pretrained_weights_fname=None,
+        train_loader=loader,
+    )
+
+    # Returned for the training loop to pass on every batch, and already
+    # carried by the init pass: a model that asks for names never runs without.
+    assert returned == ch_names
+    assert tp.cast(_NameReader, model).seen == ch_names
+
+
 def test_build_brain_model_forwards_dataset_channel_names_to_adapter(
     build_data: Callable[..., Data],
 ) -> None:
@@ -43,7 +97,7 @@ def test_build_brain_model_forwards_dataset_channel_names_to_adapter(
         aggregation="flatten",
     )
 
-    model, _, _ = build_brain_model(
+    model, _, _, _ = build_brain_model(
         brain_model_config=_Passthrough(),
         downstream_model_wrapper=wrapper,
         pretrained_weights_fname=None,
@@ -60,4 +114,31 @@ def test_build_brain_model_forwards_dataset_channel_names_to_adapter(
     assert torch.allclose(adapter.weight, expected), (
         "identity-init adapter weight is not the identity; dataset channel "
         "names did not reach the adapter."
+    )
+
+
+def test_build_brain_model_sizes_head_from_dense_target_channel_axis(
+    build_data: Callable[..., Data],
+) -> None:
+    # A dense target (an extractor's raw ``(C, T)`` output rather than an
+    # encoded label) is channel-major, so its last axis is time.  Sizing the
+    # head from it gives a model as wide as the window is long, which only
+    # surfaces later as a shape mismatch in the loss.
+    data = build_data(seed=0, target={"name": "MneRaw", "event_types": "Eeg"})
+    loader = data.prepare()["train"]
+    target = next(iter(loader)).data["target"]
+    assert target.ndim == 3, "fixture no longer yields a dense target"
+
+    _RECORDED_N_OUTPUTS.clear()
+    build_brain_model(
+        brain_model_config=_RecordHeadWidth(),
+        downstream_model_wrapper=None,
+        pretrained_weights_fname=None,
+        train_loader=loader,
+    )
+
+    n_channels, n_times = target.shape[1], target.shape[2]
+    assert _RECORDED_N_OUTPUTS == [n_channels], (
+        f"head sized {_RECORDED_N_OUTPUTS} rather than {[n_channels]} channels "
+        f"(the window is {n_times} samples long)."
     )

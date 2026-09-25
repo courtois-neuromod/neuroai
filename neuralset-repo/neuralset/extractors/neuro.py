@@ -289,7 +289,7 @@ class MneRaw(BaseExtractor):
 
     def _exclude_from_cache_uid(self) -> list[str]:
         prev = super()._exclude_from_cache_uid()
-        return prev + ["baseline", "offset", "scale_factor", "clamp"]
+        return prev + ["baseline", "offset", "scale_factor", "clamp", "channel_order"]
 
     def model_post_init(self, log__: tp.Any) -> None:
         super().model_post_init(log__)
@@ -480,7 +480,7 @@ class MneRaw(BaseExtractor):
             Stack based on original channel order only:
             subject1: [a, b, c,]; subject2: [a, d, e]
             self._channel: {a: 0, b: 1, c: 2}
-            self._channel: {a: 0, d:1, e:2}
+            self._channel: {a: 0, b: 1, c: 2, d: 1, e: 2}
             Allows use of a subject layer of fixed dimension across subjects
             Prevents building a too large channel dimension when many subjects
 
@@ -489,11 +489,11 @@ class MneRaw(BaseExtractor):
             `self.channel_order = "unique"` (default behavior)
 
             Unique channel stacking: we loop across all mne channels.
-            if this channel is not known, we create a new dimension for it:
+            If this channel is not known, we create a new dimension for it:
             dimension = len(self._channels)
             subject1: [a, b, c,]; subject2: [a, d, e]
             self._channel: {a: 0, b: 1, c: 2}
-            self._channel: {a: 0, b: 1, c: 2, d:3, e:3}
+            self._channel: {a: 0, b: 1, c: 2, d: 3, e: 4}
         """
         match self.channel_order:
             case "original":
@@ -2335,7 +2335,12 @@ class ChannelPositions(BaseStatic):
         invalid_names = [n for n in ch_names if n and n not in pos_mapping]
 
         if not valid_inds:
-            raise ValueError(f"No channel has valid positions: {ta_ch_names}.")
+            raise ValueError(
+                f"No channel has valid positions: {ta_ch_names}. Positions come "
+                f"from {self.layout_or_montage_name or 'the recording ch_locs'}; "
+                "set layout_or_montage_name to a montage naming these channels, "
+                "or to None to read them off the recording."
+            )
 
         if len(valid_inds) < 0.1 * len(ch_names):
             unique_invalid_names = set(invalid_names)

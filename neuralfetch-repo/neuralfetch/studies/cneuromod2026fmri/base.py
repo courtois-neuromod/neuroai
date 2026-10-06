@@ -1,20 +1,24 @@
 
-from tqdm import tqdm
-import typing as tp
 
 import h5py
 import numpy as np
 import pandas as pd
+import typing as tp
+
+from tqdm import tqdm
 
 from neuralset import BaseExtractor
 from neuralset.base import StrCast, Frequency, TimedArray
 from neuralset.events import etypes, study
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Default parameters
 # ---------------------------------------------------------------------------
 
+#: GitHub base URL for CNeuroMod datalad repositories.
+_CNEUROMOD_GH_URL = "https://github.com/courtois-neuromod/{repo}.git"
 #: Default MNI152 template identifier used by fMRIPrep.
 DEFAULT_SPACE = "MNI152NLin2009cAsym"
 #: Default fMRI TR in seconds.
@@ -40,7 +44,53 @@ TSERIES_DESCRIPT = {
 # ---------------------------------------------------------------------------
 
 class _CNeuroModStudy(study.Study):
-    """Private base class for all CneuroMod studies."""
+    """Private base class for all CneuroMod studies.
+    
+    Handles the DataLad download of the BIDS and fMRIPrep repositories, the
+    discovery of timelines from the fMRIPrep volumetric files, and the ``Fmri``
+    event of each timeline.
+    """
+
+    #: Name of the raw BIDS DataLad repository (e.g. ``"movie10"``).
+    BIDS_REPO: tp.ClassVar[str] = ""
+    #: Name of the fMRIPrep derivatives DataLad repository (e.g. ``"movie10.fmriprep"``).
+    FMRIPREP_REPO: tp.ClassVar[str] = ""
+    # Name of the timeseries DataLad repository (e.g. ``"movie10.timeseries"``).
+    TIMESERIES_REPO: tp.ClassVar[str] = ""
+
+    url: tp.ClassVar[str] = "https://www.cneuromod.ca/"
+    licence: tp.ClassVar[str] = (
+        "CC0 (subjects 01, 02, 03, 05, 06) / Registered access — "
+        "see https://www.cneuromod.ca/"
+    )
+    bibtex: tp.ClassVar[str] = """
+    @article{boyle2020CCNposter,
+        title={CNeuroMod, an open fMRI dataset with diverse naturalistic & 
+        controlled tasks to build NeuroAI models},
+        author={Boyle, Julie and Pinsard, Basile and St-Laurent, Marie 
+        and Bellec, Lune},
+        howpublished = {Poster presented at the OHBM 2026 Annual Meeting},
+        address      = {Bordeaux, France},
+        year={2026},
+        month = {July},
+    }
+    @article{st2026cneuromod,
+        title={CNeuroMod-THINGS, a densely-sampled fMRI dataset for visual neuroscience},
+        author={St-Laurent, Marie and Pinsard, Basile and Contier, Oliver and DuPre, Elizabeth and Seeliger, Katja and Borghesani, Valentina and Boyle, Julie A and Bellec, Lune and Hebart, Martin N},
+        journal={Scientific Data},
+        volume={13},
+        number={1},
+        pages={141},
+        year={2026},
+        publisher={Nature Publishing Group UK London}
+    }
+    """
+    description: tp.ClassVar[str] = (
+        "Densely-sampled fMRI database collected on 6 subjects "
+        "since 2018 across a broad range of cognitive tasks."
+    )
+    # requirements: tp.ClassVar[tuple[str, ...]] = ("pybids",)  # for expand_bids_fmri
+
 
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):

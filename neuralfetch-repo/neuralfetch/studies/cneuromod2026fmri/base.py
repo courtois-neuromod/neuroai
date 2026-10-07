@@ -59,8 +59,8 @@ class _CNeuroModStudy(study.Study):
     BIDS_REPO: tp.ClassVar[str] = ""
     #: Name of the fMRIPrep derivatives DataLad repository (e.g. ``"movie10.fmriprep"``).
     FMRIPREP_REPO: tp.ClassVar[str] = ""
-    # Name of the timeseries DataLad repository (e.g. ``"movie10.timeseries"``).
-    TIMESERIES_REPO: tp.ClassVar[str] = ""
+    # # Name of the timeseries DataLad repository (e.g. ``"movie10.timeseries"``).
+    # TIMESERIES_REPO: tp.ClassVar[str] = ""
 
     url: tp.ClassVar[str] = "https://www.cneuromod.ca/"
     licence: tp.ClassVar[str] = (

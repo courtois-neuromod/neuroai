@@ -1,12 +1,16 @@
 
 
 import h5py
+import logging
+import hashlib
 import numpy as np
 import pandas as pd
 import typing as tp
 
 from tqdm import tqdm
+from pathlib import Path
 
+from neuralfetch import download
 from neuralset import BaseExtractor
 from neuralset.base import StrCast, Frequency, TimedArray
 from neuralset.events import etypes, study
@@ -91,6 +95,145 @@ class _CNeuroModStudy(study.Study):
     )
     # requirements: tp.ClassVar[tuple[str, ...]] = ("pybids",)  # for expand_bids_fmri
 
+
+    # -----------------------------------------------------------------
+    # Download
+    # -----------------------------------------------------------------
+    
+    def _repo_dir(self, repo: str) -> Path:
+        """Local clone of a DataLad repository, as created by ``download.Datalad``."""
+        return self.path / "download" / repo
+
+    def _download_includes(self) -> dict[str, list[str]]:
+        """Map each DataLad repository to the dataset-relative globs to fetch.
+
+        Must be implemented by every study, for all the repositories it uses
+        (BIDS, fMRIPrep, and e.g. stimuli / annotations): the layout differs
+        between cneuromod datasets.
+        Every repository named in a ``*_REPO`` class attribute must be a key, and
+        every glob must match at least one file (both checked by :meth:`_download`).
+
+        Note: the file names selected here are spelled out again by the loading
+        code (:meth:`iter_timelines`, :meth:`_load_fmri_event`, the stimulus /
+        transcript paths), so both must be kept in sync.
+        """
+        raise NotImplementedError
+
+    def _clone_repo(self, repo: str, repo_url: str) -> Path:
+        """Clone a DataLad repository into ``download/<repo>/``, unless already cloned.
+
+        Only the git-annex pointers are cloned, not the file content.
+
+        Parameters
+        ----------
+        repo : str
+            Repository name, e.g. ``"movie10.fmriprep"``.
+        repo_url : str
+            Clone URL, e.g. ``"https://github.com/courtois-neuromod/movie10.fmriprep.git"``.
+
+        Returns
+        -------
+        Path
+            The local clone, ``{study path}/download/<repo>/``.
+        """
+        # This guards against the empty-selection bug raised in issue #282
+        # that triggers whole-dataset download.
+        # TODO: to be removed once upstream issue is fixed.
+        import datalad.api as dlad
+
+        sub_path = self._repo_dir(repo)
+        if not sub_path.exists():
+            sub_path.parent.mkdir(parents=True, exist_ok=True)
+            dlad.clone(source=repo_url, path=sub_path)
+
+        return sub_path
+
+    def _check_glob_matches(self, repo: str, repo_url: str, sub_path: Path, pattern: str) -> None:
+        """Raise if an include glob matches no file of a cloned repository.
+
+        Parameters
+        ----------
+        repo : str
+            Repository name, e.g. ``"movie10.fmriprep"``.
+        repo_url : str
+            Clone URL of the repository.
+        sub_path : Path
+            Local clone of the repository (see :meth:`_resolve_subdir`).
+        pattern : str
+            Dataset-relative include glob, e.g. ``"task-*_events.tsv"``.
+
+        Raises
+        ------
+        RuntimeError
+            If ``pattern`` matches no file under ``sub_path``.
+        """
+        # This guards against the empty-selection bug raised in issue #282
+        # that triggers whole-dataset download.
+        # TODO: to be removed once upstream issue is fixed.
+
+        # ``download.Datalad`` fetches the whole repository when its selection is
+        # empty, so each glob is checked before the download starts. The check uses
+        # the backend's own matcher (``Datalad._selected_paths``),
+        # so it selects exactly the files the download would.
+        
+        matcher = download.Datalad(
+                study=repo, dset_dir=self.path, repo_url=repo_url, include=[pattern]
+            )
+        if not matcher._selected_paths(sub_path):
+            raise RuntimeError(
+                f"No file of {sub_path} matches the include glob {pattern!r}; "
+                "aborting rather than downloading the whole repository."
+            )
+
+    def _selection_hash(self, globs: list[str]) -> str:
+        """Return a hash of the include globs."""
+        
+        # This guards against the failed wider selection bug raised in issue #282 
+        # the success marker of download.Datalad is named after `study` and ignores `include`,
+        # so a later, different selection would be silently skipped.
+        # Name it after the selection instead; files already fetched are skipped by git-annex.
+        # TODO: to be removed once upstream issue is fixed.
+        return hashlib.sha1("\n".join(sorted(globs)).encode()).hexdigest()[:8]
+
+    def _download(self, overwrite: bool = False) -> None:
+        """Clone each DataLad repository and fetch only its selected files.
+
+        Each repository is cloned on its own (not as a subdataset of
+        ``cneuromod.all``), so the include globs of ``download.Datalad`` see all
+        of its files.
+        """
+
+        includes = self._download_includes()
+        repos = {
+            getattr(self, name)
+            for name in dir(type(self))
+            if name.endswith("_REPO") and getattr(self, name)
+        }
+        missing = sorted(repos - includes.keys())
+        if missing:
+            raise ValueError(
+                f"{type(self).__name__}._download_includes() does not cover the "
+                f"repositories {missing}."
+            )
+
+        for repo, include in includes.items():
+            # WORKAROUND 1: guard against the empty selection bug raised in issue #282
+            repo_url = _CNEUROMOD_GH_URL.format(repo=repo)
+            sub_path = self._clone_repo(repo, repo_url)
+
+            for pattern in include:
+                self._check_glob_matches(repo, repo_url, sub_path, pattern)
+            
+            # WORKAROUND 2: guard against failed wider selection raised in issue #282 
+            selection = self._selection_hash(include)
+
+            download.Datalad(
+                study=f"{repo}-{selection}",
+                dset_dir=self.path,
+                repo_url=repo_url,
+                include=include,
+                threads=4,
+            ).download(overwrite=overwrite)
 
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):

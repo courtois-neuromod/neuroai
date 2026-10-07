@@ -93,7 +93,10 @@ class _CNeuroModStudy(study.Study):
         "Densely-sampled fMRI database collected on 6 subjects "
         "since 2018 across a broad range of cognitive tasks."
     )
-    # requirements: tp.ClassVar[tuple[str, ...]] = ("pybids",)  # for expand_bids_fmri
+    requirements: tp.ClassVar[tuple[str, ...]] = (
+        "pybids",
+        "datalad",
+        )
 
 
     # -----------------------------------------------------------------

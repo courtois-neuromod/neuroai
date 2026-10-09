@@ -238,6 +238,31 @@ class _CNeuroModStudy(study.Study):
                 threads=4,
             ).download(overwrite=overwrite)
 
+    # -----------------------------------------------------------------
+    # Timelines
+    # -----------------------------------------------------------------
+
+    def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
+        fmriprep_dir = self._repo_dir(self.FMRIPREP_REPO)
+        if not fmriprep_dir.exists():
+            raise RuntimeError()
+        
+        pattern = f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"
+        for fp in sorted(fmriprep_dir.glob(pattern)):
+            entities = dict(
+                part.split("-", 1)
+                for part in fp.name.split(f"_space-{DEFAULT_SPACE}")[0].split("_")
+            )
+            timeline = dict(
+                subject=entities["sub"],
+                session=entities["ses"],
+                task=entities["task"],
+            )
+            
+            if "run" in entities:
+                timeline["run"] = entities["run"]
+            yield timeline
+
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching and 

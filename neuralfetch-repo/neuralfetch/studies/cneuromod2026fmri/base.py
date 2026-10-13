@@ -270,6 +270,12 @@ class _CNeuroModStudy(study.Study):
         if "run" in tl:
             stem += f"_run-{tl['run']}"
         return stem
+
+    def _get_tr(self, filepath: Path) -> float:
+        """Get the Repetition Time from a BOLD volume file."""
+        with filepath.open() as f:
+            tr = float(json.load(f)["RepetitionTime"])
+        return tr
     
     def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
         import nibabel
@@ -282,19 +288,19 @@ class _CNeuroModStudy(study.Study):
         )
         
         stem = self._bids_stem(timeline)
+        file_basename = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc"
         
         # import BOLD volume and mask
-        bold_fp = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"
-        mask_fp = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-brain_mask.nii.gz"
+        bold_fp = file_basename + ".nii.gz"
+        mask_fp = file_basename + "_brain_mask.nii.gz"
         for fp in (bold_fp, mask_fp):
             if not fp.resolve().exists():
                 raise FileNotFoundError(
                     f"Content of {fp} is not available locally. "
                     "Please run study.download() first."
                 )
-        with (func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc_bold.json").open() as f:
-            tr = float(json.load(f)["RepetitionTime"])
         
+        tr = self._get_tr(file_basename + "_bold.json")
         n_trs = nibabel.load(bold_fp).shape[-1]
         
         events = event_utils.expand_bids_fmri(

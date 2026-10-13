@@ -1,5 +1,4 @@
-
-
+import json
 import h5py
 import logging
 import hashlib
@@ -14,6 +13,7 @@ from neuralfetch import download
 from neuralset import BaseExtractor
 from neuralset.base import StrCast, Frequency, TimedArray
 from neuralset.events import etypes, study
+from neuralset.events import utils as event_utils
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +262,49 @@ class _CNeuroModStudy(study.Study):
             if "run" in entities:
                 timeline["run"] = entities["run"]
             yield timeline
+
+    def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        import nibabel
+
+        func_dir = (
+            self._repo_dir(self.FMRIPREP_REPO)
+            / f"sub-{timeline['subject']}"
+            / f"ses-{timeline['session']}"
+            / "func"
+        )
+        
+        tl = timeline
+        stem = f"sub-{tl['subject']}_ses-{tl['session']}_task-{tl['task']}"
+        if "run" in tl:
+            stem += f"_run-{tl['run']}"
+        
+        # import BOLD volume and mask
+        bold_fp = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"
+        mask_fp = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-brain_mask.nii.gz"
+        for fp in (bold_fp, mask_fp):
+            if not fp.resolve().exists():
+                raise FileNotFoundError(
+                    f"Content of {fp} is not available locally. "
+                    "Please run study.download() first."
+                )
+        with (func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc_bold.json").open() as f:
+            tr = float(json.load(f)["RepetitionTime"])
+        
+        n_trs = nibabel.load(bold_fp).shape[-1]
+        
+        events = event_utils.expand_bids_fmri(
+            str(func_dir / f"{stem}_space-{DEFAULT_SPACE}_*"),
+            preproc="fmriprep",
+            start=0.0,
+            frequency=1.0 / tr,
+            duration=n_trs * tr,
+        )
+        if len(events) != 1 or "mask_filepath" not in events[0]:
+            raise RuntimeError(
+                f"Expected 1 {DEFAULT_SPACE} Fmri event with a brain mask for {stem}, "
+                f"got {events}"
+            )
+        return events[0]
 
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):

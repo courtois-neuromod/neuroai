@@ -263,6 +263,14 @@ class _CNeuroModStudy(study.Study):
                 timeline["run"] = entities["run"]
             yield timeline
 
+    def _bids_stem(self, timeline: dict[str, tp.Any]) -> str:
+        """BIDS file name stem of a timeline (e.g. ``sub-01_ses-001_task-bourne01``)."""
+        tl = timeline
+        stem = f"sub-{tl['subject']}_ses-{tl['session']}_task-{tl['task']}"
+        if "run" in tl:
+            stem += f"_run-{tl['run']}"
+        return stem
+    
     def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
         import nibabel
 
@@ -273,10 +281,7 @@ class _CNeuroModStudy(study.Study):
             / "func"
         )
         
-        tl = timeline
-        stem = f"sub-{tl['subject']}_ses-{tl['session']}_task-{tl['task']}"
-        if "run" in tl:
-            stem += f"_run-{tl['run']}"
+        stem = self._bids_stem(timeline)
         
         # import BOLD volume and mask
         bold_fp = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"

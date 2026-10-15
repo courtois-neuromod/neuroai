@@ -288,11 +288,11 @@ class _CNeuroModStudy(study.Study):
         )
         
         stem = self._bids_stem(timeline)
-        file_basename = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-preproc"
+        file_basename = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-"
         
-        # import BOLD volume and mask
-        bold_fp = file_basename + ".nii.gz"
-        mask_fp = file_basename + "_brain_mask.nii.gz"
+        # import BOLD volume and mask##########
+        bold_fp = file_basename + "preproc_bold.nii.gz"
+        mask_fp = file_basename + "brain_mask.nii.gz"
         for fp in (bold_fp, mask_fp):
             if not fp.resolve().exists():
                 raise FileNotFoundError(
@@ -300,8 +300,9 @@ class _CNeuroModStudy(study.Study):
                     "Please run study.download() first."
                 )
         
-        tr = self._get_tr(file_basename + "_bold.json")
         n_trs = nibabel.load(bold_fp).shape[-1]
+        #######################################
+        tr = self._get_tr(file_basename + "_bold.json")
         
         events = event_utils.expand_bids_fmri(
             str(func_dir / f"{stem}_space-{DEFAULT_SPACE}_*"),
@@ -316,7 +317,6 @@ class _CNeuroModStudy(study.Study):
                 f"got {events}"
             )
         return events[0]
-
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching and 

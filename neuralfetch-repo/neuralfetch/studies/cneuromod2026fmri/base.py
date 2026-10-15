@@ -281,8 +281,14 @@ class _CNeuroModStudy(study.Study):
 
     def _get_tr(self, filepath: Path) -> float:
         """Get the Repetition Time from a BOLD volume file."""
+        import math
         with filepath.open() as f:
             tr = float(json.load(f)["RepetitionTime"])
+
+        if not math.isclose(tr, DEFAULT_TR, rel_tol=1e-3):
+            raise ValueError(
+                f"Expected TR {DEFAULT_TR}s, got {tr}s for {filepath}"
+            )
         return tr
 
     def _get_n_trs(self, filepath: Path) -> int:

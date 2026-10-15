@@ -263,6 +263,14 @@ class _CNeuroModStudy(study.Study):
                 timeline["run"] = entities["run"]
             yield timeline
 
+    def _check_file_exists(self, filepath: Path) -> None:
+        """Check if file datalad content is available locally."""
+        if not filepath.resolve().exists():
+                raise FileNotFoundError(
+                    f"Content of {filepath} is not available locally. "
+                    "Run study.download() or datalad get to fetch the content."
+                )
+
     def _bids_stem(self, timeline: dict[str, tp.Any]) -> str:
         """BIDS file name stem of a timeline (e.g. ``sub-01_ses-001_task-bourne01``)."""
         tl = timeline
@@ -276,10 +284,16 @@ class _CNeuroModStudy(study.Study):
         with filepath.open() as f:
             tr = float(json.load(f)["RepetitionTime"])
         return tr
-    
-    def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
+
+    def _get_n_trs(self, filepath: Path) -> int:
+        """Get the number of time points from a BOLD volume file."""
         import nibabel
 
+        n_trs = nibabel.load(filepath).shape[-1]
+        return n_trs
+    
+    def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        
         func_dir = (
             self._repo_dir(self.FMRIPREP_REPO)
             / f"sub-{timeline['subject']}"
@@ -290,18 +304,13 @@ class _CNeuroModStudy(study.Study):
         stem = self._bids_stem(timeline)
         file_basename = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-"
         
-        # import BOLD volume and mask##########
+        # import BOLD volume and mask
         bold_fp = file_basename + "preproc_bold.nii.gz"
         mask_fp = file_basename + "brain_mask.nii.gz"
         for fp in (bold_fp, mask_fp):
-            if not fp.resolve().exists():
-                raise FileNotFoundError(
-                    f"Content of {fp} is not available locally. "
-                    "Please run study.download() first."
-                )
+            self._check_file_exists(fp)
         
-        n_trs = nibabel.load(bold_fp).shape[-1]
-        #######################################
+        n_trs = self._get_n_trs(bold_fp)
         tr = self._get_tr(file_basename + "_bold.json")
         
         events = event_utils.expand_bids_fmri(

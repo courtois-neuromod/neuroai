@@ -440,6 +440,17 @@ class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching study
     fetchers, including Friends, Movie10 and OOD."""
 
+    def _get_stimulus_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        """Stimulus event of the timeline: a ``Video`` event (``.mkv``).
+
+        Duration and frequency are read from the file by the event.
+        """
+        return dict(
+            type="Video",
+            start=self._get_stimulus_onset(timeline),
+            filepath=str(self._get_stimulus_path(timeline)),
+        )
+
 class _CNeuroModVideoGameStudy(_CNeuroModStudy):
     """Abstract base class for all Courtois NeuroMod videogame-playing study
     fetchers, including Shinobi, Mario, MarioStars and Mario3."""

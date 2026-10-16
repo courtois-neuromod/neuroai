@@ -333,6 +333,10 @@ class _CNeuroModStudy(study.Study):
             )
         return events[0]
 
+    def _load_stimulus_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
+        """Load stimulus events of a timeline. Override in subclasses."""
+        return pd.DataFrame()
+
 class _CNeuroModAudioStudy(_CNeuroModStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching and 
     audio-listening study fetchers, including Le Petit Prince, Narratives,

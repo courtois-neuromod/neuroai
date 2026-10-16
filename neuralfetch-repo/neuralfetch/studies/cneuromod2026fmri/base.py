@@ -387,6 +387,51 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
             filepath=str(self._get_stimulus_path(timeline)),
         )
 
+    def _load_transcript_events(
+        self, timeline: dict[str, tp.Any]
+    ) -> list[dict[str, tp.Any]]:
+        """``Word`` events and one ``Text`` event from the timeline's transcript.
+
+        Transcript times are relative to the start of the stimulus, so they are
+        shifted by the stimulus onset to be relative to the start of the run.
+        """
+        transcript_fp = self._get_transcript_path(timeline)
+        if not transcript_fp.exists():
+            logger.warning("No transcript found at %s", transcript_fp)
+            return []
+        with transcript_fp.open() as f:
+            transcript = json.load(f)
+        text_info = dict(
+            language=self._get_transcript_language(timeline),
+            modality="heard"
+        )
+        
+        onset = self._get_stimulus_onset(timeline)
+        words = transcript["words"]
+        events: list[dict[str, tp.Any]] = [
+            dict(
+                type="Word",
+                text=word["word"],
+                start=onset + word["start"],
+                duration=word["end"] - word["start"],
+                **text_info,
+            )
+            for word in words
+        ]
+        if words:
+            start, stop = words[0]["start"], words[-1]["end"]
+            events.append(
+                dict(
+                    type="Text",
+                    text=transcript["transcript"],
+                    start=onset + start,
+                    duration=stop - start,
+                    **text_info,
+                )
+            )
+        return events
+
+
 class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching study
     fetchers, including Friends, Movie10 and OOD."""

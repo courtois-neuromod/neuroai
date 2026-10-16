@@ -431,6 +431,10 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
             )
         return events
 
+    def _load_stimulus_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
+        events = [self._get_stimulus_event(timeline)]
+        events += self._load_transcript_events(timeline)
+        return pd.DataFrame(events)
 
 class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching study

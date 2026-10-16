@@ -350,6 +350,42 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
     audio-listening study fetchers, including Le Petit Prince, Narratives,
     Friends, Movie10 and OOD."""
 
+    STIMULI_REPO: tp.ClassVar[str] = ""
+    TRANSCRIPTS_REPO: tp.ClassVar[str] = ""
+
+    def _get_stimulus_path(self, timeline: dict[str, tp.Any]) -> Path:
+        """Stimulus file (e.g. audio ``.wav``, video ``.mkv``) presented during the timeline."""
+        raise NotImplementedError
+
+    def _get_stimulus_onset(self, timeline: dict[str, tp.Any]) -> float:
+        """Onset of the stimulus, in seconds from the start of the run.
+
+        The ``onset`` of the BIDS ``events.tsv``.
+        """
+        raise NotImplementedError
+
+    def _get_transcript_path(self, timeline: dict[str, tp.Any]) -> Path:
+        """Transcript (``.json``) of the stimulus presented during the timeline."""
+        raise NotImplementedError
+
+    def _get_transcript_language(self, timeline: dict[str, tp.Any]) -> str:
+        """Language of the transcript (e.g. ``"english"``).
+
+        A method rather than a constant, as it can change per run. 
+        Override for non-English studies.
+        """
+        return "english"
+
+    def _get_stimulus_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        """Stimulus event of the timeline: an ``Audio`` event (``.wav``).
+
+        Duration and frequency are read from the file by the event.
+        """
+        return dict(
+            type="Audio",
+            start=self._get_stimulus_onset(timeline),
+            filepath=str(self._get_stimulus_path(timeline)),
+        )
 
 class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching study

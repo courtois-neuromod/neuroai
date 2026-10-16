@@ -308,16 +308,16 @@ class _CNeuroModStudy(study.Study):
         )
         
         stem = self._bids_stem(timeline)
-        file_basename = func_dir / f"{stem}_space-{DEFAULT_SPACE}_desc-"
+        prefix = f"{stem}_space-{DEFAULT_SPACE}_desc"
         
         # import BOLD volume and mask
-        bold_fp = file_basename + "preproc_bold.nii.gz"
-        mask_fp = file_basename + "brain_mask.nii.gz"
+        bold_fp = func_dir / f"{prefix}-preproc_bold.nii.gz"
+        mask_fp = func_dir / f"{prefix}-brain_mask.nii.gz"
         for fp in (bold_fp, mask_fp):
             self._check_file_exists(fp)
         
         n_trs = self._get_n_trs(bold_fp)
-        tr = self._get_tr(file_basename + "_bold.json")
+        tr = self._get_tr(func_dir / f"{prefix}-preproc_bold.json")
         
         events = event_utils.expand_bids_fmri(
             str(func_dir / f"{stem}_space-{DEFAULT_SPACE}_*"),

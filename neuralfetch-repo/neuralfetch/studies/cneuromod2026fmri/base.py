@@ -1,5 +1,6 @@
 import json
 import h5py
+import math
 import logging
 import hashlib
 import numpy as np
@@ -245,7 +246,10 @@ class _CNeuroModStudy(study.Study):
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         fmriprep_dir = self._repo_dir(self.FMRIPREP_REPO)
         if not fmriprep_dir.exists():
-            raise RuntimeError()
+            raise RuntimeError(
+                f"fMRIPrep repository not found at {fmriprep_dir}. "
+                "Run study.download() first."
+            )
         
         pattern = f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"
         for fp in sorted(fmriprep_dir.glob(pattern)):
@@ -281,7 +285,6 @@ class _CNeuroModStudy(study.Study):
 
     def _get_tr(self, filepath: Path) -> float:
         """Get the Repetition Time from a BOLD volume file."""
-        import math
         with filepath.open() as f:
             tr = float(json.load(f)["RepetitionTime"])
 

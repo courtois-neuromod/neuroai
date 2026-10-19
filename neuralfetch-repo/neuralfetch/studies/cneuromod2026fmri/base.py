@@ -9,7 +9,7 @@ from pathlib import Path
 
 from neuralfetch import download
 from neuralset.events import study
-from neuralset.events import utils as event_utils
+from neuralset.events.utils import expand_bids_fmri
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ class _CNeuroModStudy(study.Study):
         n_trs = self._get_n_trs(bold_fp)
         tr = self._get_tr(func_dir / f"{prefix}-preproc_bold.json")
         
-        events = event_utils.expand_bids_fmri(
+        events = expand_bids_fmri(
             str(func_dir / f"{stem}_space-{DEFAULT_SPACE}_*"),
             preproc="fmriprep",
             start=0.0,

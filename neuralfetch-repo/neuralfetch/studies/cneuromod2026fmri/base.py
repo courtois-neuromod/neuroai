@@ -53,7 +53,9 @@ class _CNeuroModStudy(study.Study):
     
     Handles the DataLad download of the BIDS and fMRIPrep repositories, the
     discovery of timelines from the fMRIPrep volumetric files, and the ``Fmri``
-    event of each timeline.
+    event of each timeline. Subclasses set :attr:`BIDS_REPO` and
+    :attr:`FMRIPREP_REPO`, implement :meth:`_download_includes`, and may
+    override :meth:`_load_stimulus_events`.
     """
 
     #: Name of the raw BIDS DataLad repository (e.g. ``"movie10"``).
@@ -162,7 +164,7 @@ class _CNeuroModStudy(study.Study):
         repo_url : str
             Clone URL of the repository.
         sub_path : Path
-            Local clone of the repository (see :meth:`_resolve_subdir`).
+            Local clone of the repository (see :meth:`_clone_repo`).
         pattern : str
             Dataset-relative include glob, e.g. ``"task-*_events.tsv"``.
 

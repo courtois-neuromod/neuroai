@@ -27,6 +27,18 @@ DEFAULT_TR = 1.49
 DEFAULT_RESOLUTION: str | None = "2"
 
 # ---------------------------------------------------------------------------
+# Permissions patch
+# ---------------------------------------------------------------------------
+
+def _set_dir_permissions(path: Path) -> None:
+    """No-op replacement for ``neuralset.events.study._set_dir_permissions``.
+    This avoids chmoding the study folder to 777, which can corrupt the git-annex content.
+    # TODO: remove once facebookresearch/neuroai/issues/17 is fixed upstream.
+    """
+
+study._set_dir_permissions = _set_dir_permissions
+
+# ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
 

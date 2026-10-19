@@ -33,9 +33,8 @@ DEFAULT_RESOLUTION: str | None = "2"
 def _set_dir_permissions(path: Path) -> None:
     """No-op replacement for ``neuralset.events.study._set_dir_permissions``.
     This avoids chmoding the study folder to 777, which can corrupt the git-annex content.
-    # TODO: remove once facebookresearch/neuroai/issues/17 is fixed upstream.
     """
-
+# TODO: remove once facebookresearch/neuroai/issues/17 is fixed upstream.
 study._set_dir_permissions = _set_dir_permissions
 
 # ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ study._set_dir_permissions = _set_dir_permissions
 
 class _CNeuroModStudy(study.Study):
     """Private base class for all CneuroMod studies.
-    
+
     Handles the DataLad download of the BIDS and fMRIPrep repositories, the
     discovery of timelines from the fMRIPrep volumetric files, and the ``Fmri``
     event of each timeline. Subclasses set :attr:`BIDS_REPO` and
@@ -56,8 +55,6 @@ class _CNeuroModStudy(study.Study):
     BIDS_REPO: tp.ClassVar[str] = ""
     #: Name of the fMRIPrep derivatives DataLad repository (e.g. ``"movie10.fmriprep"``).
     FMRIPREP_REPO: tp.ClassVar[str] = ""
-    # # Name of the timeseries DataLad repository (e.g. ``"movie10.timeseries"``).
-    # TIMESERIES_REPO: tp.ClassVar[str] = ""
 
     url: tp.ClassVar[str] = "https://www.cneuromod.ca/"
     licence: tp.ClassVar[str] = (
@@ -345,7 +342,7 @@ class _CNeuroModStudy(study.Study):
 
 
 class _CNeuroModAudioStudy(_CNeuroModStudy):
-    """Abstract base class for all Courtois NeuroMod movie-watching and 
+    """Abstract base class for all Courtois NeuroMod movie-watching and
     audio-listening study fetchers, including Le Petit Prince, Narratives,
     Friends, Movie10 and OOD."""
 
@@ -370,7 +367,7 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
     def _get_transcript_language(self, timeline: dict[str, tp.Any]) -> str:
         """Language of the transcript (e.g. ``"english"``).
 
-        A method rather than a constant, as it can change per run. 
+        A method rather than a constant, as it can change per run.
         Override for non-English studies.
         """
         return "english"

@@ -24,7 +24,6 @@ class Movie10(_CNeuroModMovieStudy):
     * CNeuroMod documentation: https://docs.cneuromod.ca/datasets/movie10.html
     * DataLad BIDS repo: https://github.com/courtois-neuromod/movie10
     * DataLad fMRIPrep repo: https://github.com/courtois-neuromod/movie10.fmriprep
-    * DataLad timeseries repo: https://github.com/courtois-neuromod/movie10.timeseries
     * DataLad stimuli repo: https://github.com/courtois-neuromod/movie10.stimuli
     * DataLad transcripts repo: https://github.com/courtois-neuromod/movie10.annotations
 
@@ -59,7 +58,6 @@ class Movie10(_CNeuroModMovieStudy):
     TASK: tp.ClassVar[str] = "movie10"
     BIDS_REPO: tp.ClassVar[str] = "movie10"
     FMRIPREP_REPO: tp.ClassVar[str] = "movie10.fmriprep"
-    TIMESERIES_REPO: tp.ClassVar[str] = "movie10.timeseries"
     STIMULI_REPO: tp.ClassVar[str] = "movie10.stimuli"
     TRANSCRIPTS_REPO: tp.ClassVar[str] = "movie10.annotations"
     MOVIES: list[str] = ["bourne", "figures", "life", "wolf"]
@@ -145,10 +143,7 @@ class Movie10(_CNeuroModMovieStudy):
         FileNotFoundError
             If the .mkv file does not exist (DataLad content not fetched).
         """
-        if self.timeseries:
-            seg_name = timeline['run'].split("_")[1][5:]
-        else:
-            seg_name = timeline['task']
+        seg_name = timeline['task']
         mp = Path(
             f"{self._stimuli_dir}/{seg_name[:-2]}"
             f"/{seg_name}.mkv",
@@ -177,10 +172,7 @@ class Movie10(_CNeuroModMovieStudy):
         dict
             The transcript for the segmented movie shown during a given run.
         """
-        if self.timeseries:
-            seg_name = timeline['run'].split("_")[1][5:]
-        else:
-            seg_name = timeline['task']
+        seg_name = timeline['task']
         tp = Path(
             f"{self._annotations_dir}/annotations/transcripts/"
             f"{seg_name[:-2]}/movie10_{seg_name}_model-AA_transcript.json",            
@@ -214,7 +206,6 @@ class Friends(_CNeuroModMovieStudy):
     * CNeuroMod documentation: https://docs.cneuromod.ca/latest/datasets/friends.html
     * DataLad BIDS repo: https://github.com/courtois-neuromod/friends
     * DataLad fMRIPrep repo: https://github.com/courtois-neuromod/friends.fmriprep
-    * DataLad timeseries repo: https://github.com/courtois-neuromod/friends.timeseries
     * DataLad stimuli repo: https://github.com/courtois-neuromod/friends.stimuli
     * DataLad annotations repo: https://github.com/courtois-neuromod/friends.annotations
 
@@ -222,15 +213,10 @@ class Friends(_CNeuroModMovieStudy):
     ----------
     path:
         Root data directory.  Resolves ``{path}/friends/bids``,
-        ``{path}/friends/fmriprep`` or ``{path}/friends/timeseries``,
+        ``{path}/friends/fmriprep``,
         ``{path}/friends/stimuli`` and ``{path}/friends/annotations``.
     space:
         fMRIPrep output space (default ``"MNI152NLin2009cAsym"``).
-    timeseries:
-        Define to model pre-extracted, masked, denoised and normalized timeseries, 
-        rather than the fMRIPrep BOLD derivatives. Select among ``"cneuromod2026"``, 
-        ``"schaefer1000"`` (algonauts 2025 competition), ``"voxel_mni"`` or ``"voxel_native"``.
-        (default ``None``) .
     subjects:
         Restrict data loading to a subset of subject labels
         (without ``sub-`` prefix).  ``None`` includes all available subjects.
@@ -251,7 +237,6 @@ class Friends(_CNeuroModMovieStudy):
     TASK: tp.ClassVar[str] = "friends"
     BIDS_REPO: tp.ClassVar[str] = "friends"
     FMRIPREP_REPO: tp.ClassVar[str] = "friends.fmriprep"
-    TIMESERIES_REPO: tp.ClassVar[str] = "friends.timeseries"
     STIMULI_REPO: tp.ClassVar[str] = "friends.stimuli"
     TRANSCRIPTS_REPO: tp.ClassVar[str] = "friends.annotations"
 
@@ -329,10 +314,7 @@ class Friends(_CNeuroModMovieStudy):
         FileNotFoundError
             If the .mkv file does not exist (DataLad content not fetched).
         """
-        if self.timeseries:
-            seg_name = timeline['run'].split("_")[1][5:]
-        else:
-            seg_name = timeline['task']
+        seg_name = timeline['task']
         mp = Path(
             f"{self._stimuli_dir}/s{seg_name[2]}"
             f"/friends_{seg_name}.mkv",
@@ -361,10 +343,7 @@ class Friends(_CNeuroModMovieStudy):
         dict
             The transcript for the segmented episode shown during a given run.
         """
-        if self.timeseries:
-            seg_name = timeline['run'].split("_")[1][5:]
-        else:
-            seg_name = timeline['task']
+        seg_name = timeline['task']
         tp = Path(  # TODO: adjust based on friends.annotations structure
             f"{self._annotations_dir}/annotations/automated_transcription/"
             f"s{seg_name[2]}/friends_{seg_name}_model-AA_desc-wUtter_transcript.json",            

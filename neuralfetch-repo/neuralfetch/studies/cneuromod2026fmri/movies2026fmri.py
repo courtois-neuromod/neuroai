@@ -21,36 +21,39 @@ class Movie10(_CNeuroModMovieStudy):
 
     References
     ----------
-    * CNeuroMod documentation: https://docs.cneuromod.ca/latest/datasets/movie10.html
+    * CNeuroMod documentation: https://docs.cneuromod.ca/datasets/movie10.html
     * DataLad BIDS repo: https://github.com/courtois-neuromod/movie10
     * DataLad fMRIPrep repo: https://github.com/courtois-neuromod/movie10.fmriprep
     * DataLad timeseries repo: https://github.com/courtois-neuromod/movie10.timeseries
     * DataLad stimuli repo: https://github.com/courtois-neuromod/movie10.stimuli
     * DataLad transcripts repo: https://github.com/courtois-neuromod/movie10.annotations
 
-    Parameters
-    ----------
-    path:
-        Root data directory.  Resolves ``{path}/movie10/bids``,
-        ``{path}/movie10/fmriprep`` or ``{path}/movie10/timeseries``,
-        ``{path}/movie10/stimuli`` and ``{path}/movie10/annotations``.
-    space:
-        fMRIPrep output space (default ``"MNI152NLin2009cAsym"``).
-    timeseries:
-        Define to model pre-extracted, masked, denoised and normalized timeseries, 
-        rather than the fMRIPrep BOLD derivatives. Select among ``"cneuromod2026"``, 
-        ``"schaefer1000"`` (algonauts 2025 competition), ``"voxel_mni"`` or ``"voxel_native"``.
-        (default ``None``) .
-    subjects:
-        Restrict data loading to a subset of subject labels
-        (without ``sub-`` prefix).  ``None`` includes all available subjects.
-    datalad_jobs:
-        Parallel DataLad download jobs.
+    Experimental Design:
+        - 3T fMRI recordings (TR = 1.49 seconds)
+        - 6 participants (sub-01 to sub-06)
+        - Paradigm: passive movie watching, in English
+            * The Bourne Supremacy (``bourne``, 10 segments)
+            * The Wolf of Wall Street (``wolf``, 17 segments)
+            * Hidden Figures (``figures``, 12 segments, watched twice)
+            * Life, disc one: "Challenges of life, reptiles and amphibian
+              mammals" (``life``, 5 segments, watched twice)
+        - The two viewings of repeated movies are labelled ``run-1`` and ``run-2``
 
-    Example
-    --------
-    >>> study = Movie10(path="path/to/cneuromod.all")
-    >>> events = study.run()
+    Data Format:
+        - fMRIPrep derivatives, volumes in MNI152NLin2009cAsym space (2 mm),
+          with the fMRIPrep brain mask of each run
+        - 366 total timelines (6 participants x 61 runs)
+        - Event types: Fmri, Video, Word, Text
+        - Stimuli: movie segments (.mkv)
+        - Words: AssemblyAI speech-to-text transcripts (the bourne09 segment has none)
+
+    Surface projection:
+        The study provides volumes; project them to a surface mesh with the
+        extractor, e.g.
+        ``FmriExtractor(projection=SurfaceProjector(mesh="fsaverage5"))``.
+
+    Download Requirements:
+        - datalad
     """
 
     TASK: tp.ClassVar[str] = "movie10"

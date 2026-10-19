@@ -1,11 +1,11 @@
-import json
-import math
-import logging
 import hashlib
-import pandas as pd
+import json
+import logging
+import math
 import typing as tp
-
 from pathlib import Path
+
+import pandas as pd
 
 from neuralfetch import download
 from neuralset.events import study
@@ -87,7 +87,7 @@ class _CNeuroModStudy(study.Study):
     # -----------------------------------------------------------------
     # Download
     # -----------------------------------------------------------------
-    
+
     def _repo_dir(self, repo: str) -> Path:
         """Local clone of a DataLad repository, as created by ``download.Datalad``."""
         return self.path / "download" / repo
@@ -163,7 +163,7 @@ class _CNeuroModStudy(study.Study):
         # empty, so each glob is checked before the download starts. The check uses
         # the backend's own matcher (``Datalad._selected_paths``),
         # so it selects exactly the files the download would.
-        
+
         matcher = download.Datalad(
                 study=repo, dset_dir=self.path, repo_url=repo_url, include=[pattern]
             )
@@ -175,8 +175,8 @@ class _CNeuroModStudy(study.Study):
 
     def _selection_hash(self, globs: list[str]) -> str:
         """Return a hash of the include globs."""
-        
-        # This guards against the failed wider selection bug raised in issue #282 
+
+        # This guards against the failed wider selection bug raised in issue #282
         # the success marker of download.Datalad is named after `study` and ignores `include`,
         # so a later, different selection would be silently skipped.
         # Name it after the selection instead; files already fetched are skipped by git-annex.
@@ -211,8 +211,8 @@ class _CNeuroModStudy(study.Study):
 
             for pattern in include:
                 self._check_glob_matches(repo, repo_url, sub_path, pattern)
-            
-            # WORKAROUND 2: guard against failed wider selection raised in issue #282 
+
+            # WORKAROUND 2: guard against failed wider selection raised in issue #282
             selection = self._selection_hash(include)
 
             download.Datalad(
@@ -234,7 +234,7 @@ class _CNeuroModStudy(study.Study):
                 f"fMRIPrep repository not found at {fmriprep_dir}. "
                 "Run study.download() first."
             )
-        
+
         pattern = f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz"
         for fp in sorted(fmriprep_dir.glob(pattern)):
             entities = dict(
@@ -246,7 +246,7 @@ class _CNeuroModStudy(study.Study):
                 session=entities["ses"],
                 task=entities["task"],
             )
-            
+
             if "run" in entities:
                 timeline["run"] = entities["run"]
             yield timeline
@@ -284,28 +284,28 @@ class _CNeuroModStudy(study.Study):
 
         n_trs = nibabel.load(filepath).shape[-1]
         return n_trs
-    
+
     def _load_fmri_event(self, timeline: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        
+
         func_dir = (
             self._repo_dir(self.FMRIPREP_REPO)
             / f"sub-{timeline['subject']}"
             / f"ses-{timeline['session']}"
             / "func"
         )
-        
+
         stem = self._bids_stem(timeline)
         prefix = f"{stem}_space-{DEFAULT_SPACE}_desc"
-        
+
         # import BOLD volume and mask
         bold_fp = func_dir / f"{prefix}-preproc_bold.nii.gz"
         mask_fp = func_dir / f"{prefix}-brain_mask.nii.gz"
         for fp in (bold_fp, mask_fp):
             self._check_file_exists(fp)
-        
+
         n_trs = self._get_n_trs(bold_fp)
         tr = self._get_tr(func_dir / f"{prefix}-preproc_bold.json")
-        
+
         events = expand_bids_fmri(
             str(func_dir / f"{stem}_space-{DEFAULT_SPACE}_*"),
             preproc="fmriprep",
@@ -327,7 +327,7 @@ class _CNeuroModStudy(study.Study):
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         fmri = pd.DataFrame([self._load_fmri_event(timeline)])
         stimuli = self._load_stimulus_events(timeline)
-        if stimuli.empty:   
+        if stimuli.empty:
             return fmri
         return pd.concat([fmri, stimuli], ignore_index=True)
 
@@ -392,7 +392,7 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
             language=self._get_transcript_language(timeline),
             modality="heard"
         )
-        
+
         onset = self._get_stimulus_onset(timeline)
         words = transcript["words"]
         events: list[dict[str, tp.Any]] = [

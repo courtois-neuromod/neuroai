@@ -136,6 +136,9 @@ class Movie10(_CNeuroModMovieStudy):
             / f"movie10_{task}_model-AA_transcript.json"
         )
 
+    def _get_stimulus_onset(self, timeline: dict[str, tp.Any]) -> float:
+        return float(self._get_bids_event(timeline).onset)
+
 
 class Friends(_CNeuroModMovieStudy):
     """Courtois NeuroMod — *Friends* TV-watching fMRI dataset.

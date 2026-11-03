@@ -128,6 +128,20 @@ class Movie10(_CNeuroModMovieStudy):
             )
         return mp
 
+    def _get_transcript_path(self, timeline: dict[str, tp.Any]) -> Path:
+        """
+        Return the full path of the transcript file (.json) for a given movie segment.
+        """
+        task = timeline["task"]  # e.g. bourne01
+        movie = task.rstrip("0123456789")
+        return (
+            self._repo_dir(self.TRANSCRIPTS_REPO)
+            / "annotations"
+            / "transcripts"
+            / movie
+            / f"movie10_{task}_model-AA_transcript.json"
+        )
+
 
     def _load_transcript(self, timeline: dict[str, tp.Any]) -> dict:
         """

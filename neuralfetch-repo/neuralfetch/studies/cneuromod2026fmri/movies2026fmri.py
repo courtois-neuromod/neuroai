@@ -5,7 +5,7 @@ import json
 import typing as tp
 from pathlib import Path
 
-from .base import _CNeuroModMovieStudy
+from .base import _CNeuroModMovieStudy, DEFAULT_SPACE
 
 
 class Movie10(_CNeuroModMovieStudy):
@@ -55,68 +55,41 @@ class Movie10(_CNeuroModMovieStudy):
         - datalad
     """
 
-    TASK: tp.ClassVar[str] = "movie10"
+    # TASK: tp.ClassVar[str] = "movie10"
     BIDS_REPO: tp.ClassVar[str] = "movie10"
     FMRIPREP_REPO: tp.ClassVar[str] = "movie10.fmriprep"
     STIMULI_REPO: tp.ClassVar[str] = "movie10.stimuli"
     TRANSCRIPTS_REPO: tp.ClassVar[str] = "movie10.annotations"
-    MOVIES: list[str] = ["bourne", "figures", "life", "wolf"]
+    # MOVIES: list[str] = ["bourne", "figures", "life", "wolf"]
 
-    dataset_name: tp.ClassVar[str] = "CNeuroMod Movie10"
+    # dataset_name: tp.ClassVar[str] = "CNeuroMod Movie10"
     description: tp.ClassVar[str] = (
         "Six subjects watching 10 hours of Hollywood movies / BBC documentary during 3T fMRI."
     )
-    bibtex: tp.ClassVar[str] = _CNeuroModMovieStudy.bibtex
+    # bibtex: tp.ClassVar[str] = _CNeuroModMovieStudy.bibtex
 
 
     # -----------------------------------------------------------------
     # Download pattern builders
     # -----------------------------------------------------------------
 
-    def _stimuli_download_patterns(self) -> list[str]:
-        """Build stimuli glob patterns for movie files (.mkv).
-
-        Only movies segmented for individual runs are targeted:
-
-        * e.g., ``bourne01.mkv``
-
-        Returns
-        -------
-        list[str]
-            Glob patterns relative to the stimuli repository root, ready to
-            be passed as ``datalad get`` arguments. Patterns are python glob
-            compatible.
-        """
-        patterns = []
-        for mvie in self.MOVIES:
-            patterns.extend([
-                # Movie stimuli MKVs shown for this movie-watching task
-                f"{self._stimuli_dir}/{mvie}/{mvie}*.mkv",
-            ])
-        return patterns
-
-    def _annotations_download_patterns(self) -> list[str]:
-        """Build annotation glob patterns for movie transcripts (.json).
-
-        Transcripts for movies segmented for individual runs are targeted:
-
-        * e.g., ``movie10_bourne01_model-AA_transcript.json``
-
-        Returns
-        -------
-        list[str]
-            Glob patterns relative to the annotation repository root, ready to
-            be passed as ``datalad get`` arguments. Patterns are python glob
-            compatible.
-        """
-        patterns = []
-        for mvie in self.MOVIES:
-            patterns.extend([
-                # Movie dialogues transcribed with AssemblyAI speech-to-text
-                f"{self._annotations_dir}/annotations/transcripts/"
-                f"{mvie}/movie10_{mvie}*_model-AA_transcript.json",
-            ])
-        return patterns
+    def _download_includes(self) -> dict[str, list[str]]:
+        return {
+            # one events file per movie segment, at the BIDS root
+            self.BIDS_REPO: ["task-*_events.tsv"],
+            # MNI: preprocessed BOLD, its brain mask, and the BOLD JSON sidecar
+            self.FMRIPREP_REPO: [
+                f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-preproc_bold.nii.gz",
+                f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-brain_mask.nii.gz",
+                f"sub-*/ses-*/func/*_space-{DEFAULT_SPACE}_desc-preproc_bold.json",
+            ],
+            # one movie segment per run
+            self.STIMULI_REPO: ["*/*.mkv"],
+            # one transcript per movie segment, at the annotations root
+            self.TRANSCRIPTS_REPO: [
+                "annotations/transcripts/*/*_model-AA_transcript.json"
+            ],
+        }
 
     # -----------------------------------------------------------------
     # Event loading

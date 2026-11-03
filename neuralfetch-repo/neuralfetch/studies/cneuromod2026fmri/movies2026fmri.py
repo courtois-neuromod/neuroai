@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import typing as tp
+import pandas as pd
 from pathlib import Path
 
 from .base import _CNeuroModMovieStudy, DEFAULT_SPACE
@@ -95,38 +96,31 @@ class Movie10(_CNeuroModMovieStudy):
     # Event loading
     # -----------------------------------------------------------------
 
+    def _get_bids_event(self, timeline: dict[str, tp.Any]) -> pd.Series:
+        """
+        Return the single row of the segment's BIDS events file (at the BIDS root).
+        e.g. task-bourne01_events.tsv: onset=0, duration=603.07, stim_file=bourne/bourne01.mkv
+
+        Raises
+        ------
+        RuntimeError: If the BIDS events file does not contain exactly one event.
+        """
+        events_fp = self._repo_dir(self.BIDS_REPO) / f"task-{timeline['task']}_events.tsv"
+        events = pd.read_csv(events_fp, sep="\t")
+        if len(events) != 1:
+            raise RuntimeError(f"Expected one event in {events_fp}, got {len(events)}")
+        return events.iloc[0]
+
     def _get_stimulus_path(self, timeline: dict[str, tp.Any]) -> Path:
         """
         Return the full path of the segmented movie file (.mkv) shown during a 
         given run ('timeline').
-
-        Parameters
-        ----------
-        timeline:
-            Timeline dictionary with keys ``subject``, ``session``, ``run``,
-            ``task``.
-
-        Returns
-        -------
-        Path
-            The path to the segmented movie file shown during a given run.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the .mkv file does not exist (DataLad content not fetched).
         """
-        seg_name = timeline['task']
-        mp = Path(
-            f"{self._stimuli_dir}/{seg_name[:-2]}"
-            f"/{seg_name}.mkv",
+        stimulus_fp = (
+            self._repo_dir(self.STIMULI_REPO) / self._get_bids_event(timeline).stim_file
         )
-        if not mp.exists():
-            raise FileNotFoundError(
-                f"Movie file not found: {mp}\n"
-                "Run study.download() or datalad get to fetch the content."
-            )
-        return mp
+        self._check_file_exists(stimulus_fp)
+        return stimulus_fp
 
     def _get_transcript_path(self, timeline: dict[str, tp.Any]) -> Path:
         """

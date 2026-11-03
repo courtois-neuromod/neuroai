@@ -143,38 +143,6 @@ class Movie10(_CNeuroModMovieStudy):
         )
 
 
-    def _load_transcript(self, timeline: dict[str, tp.Any]) -> dict:
-        """
-        Load the speech-to-text transcript of the segmented movie 
-        shown during a given run ('timeline').
-
-        Parameters
-        ----------
-        timeline:
-            Timeline dictionary with keys ``subject``, ``session``, ``run``,
-            ``task``.
-
-        Returns
-        -------
-        dict
-            The transcript for the segmented movie shown during a given run.
-        """
-        seg_name = timeline['task']
-        tp = Path(
-            f"{self._annotations_dir}/annotations/transcripts/"
-            f"{seg_name[:-2]}/movie10_{seg_name}_model-AA_transcript.json",            
-        )
-        if not tp.exists():
-            return {
-                "transcript": "",
-                "words": [],
-            }
-        with open(tp, "r") as file:
-            transcript = json.load(file)
-
-        return transcript
-
-
 class Friends(_CNeuroModMovieStudy):
     """Courtois NeuroMod — *Friends* TV-watching fMRI dataset.
 

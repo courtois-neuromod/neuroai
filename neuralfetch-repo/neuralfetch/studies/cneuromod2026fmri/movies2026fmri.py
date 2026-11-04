@@ -178,6 +178,8 @@ class Friends(_CNeuroModMovieStudy):
     --------
     >>> study = Friends(path="path/to/cneuromod.all")
     >>> events = study.run()
+
+    Not implemented yet.
     """
 
     TASK: tp.ClassVar[str] = "friends"
@@ -191,112 +193,6 @@ class Friends(_CNeuroModMovieStudy):
         "Six subjects watching Friends TV show seasons 1-6 (≈50 h) "
         "during 3T fMRI acquisition."
     )
-    bibtex: tp.ClassVar[str] = _CNeuroModMovieStudy.bibtex
 
-    # -----------------------------------------------------------------
-    # Download pattern builders
-    # -----------------------------------------------------------------
-
-    def _stimuli_download_patterns(self) -> list[str]:
-        """Build stimuli glob patterns for movie files (.mkv).
-
-        Only episodes segmented for individual runs are targeted:
-
-        * e.g., ``friends_s01e01a.mkv``
-
-        Returns
-        -------
-        list[str]
-            Glob patterns relative to the stimuli repository root, ready to
-            be passed as ``datalad get`` arguments. Patterns are python glob
-            compatible.
-        """
-        return [
-            f"{self._stimuli_dir}/s*/friends_s0*e*[abcd].mkv",
-        ]
-
-    def _annotations_download_patterns(self) -> list[str]:
-        """Build annotation glob patterns for episode transcripts (.json).
-
-        Transcripts for movies segmented for individual runs are targeted:
-
-        * e.g., ``friends_s01e01a_model-AA_desc-wUtter_transcript.json``
-
-        Returns
-        -------
-        list[str]
-            Glob patterns relative to the annotation repository root, ready to
-            be passed as ``datalad get`` arguments. Patterns are python glob
-            compatible.
-        """
-        return [
-            f"{self._annotations_dir}/automated_transcription/s*/"
-            "friends_s0*e*_model-AA_desc-wUtter_transcript.json",  # TODO: update desc-wSpeaker
-        ]
-
-    # -----------------------------------------------------------------
-    # Event loading
-    # -----------------------------------------------------------------
-
-    def _get_stimulus_path(self, timeline: dict[str, tp.Any]) -> Path:
-        """
-        Return the full path of the segmented movie file (.mkv) shown during a
-        given run ('timeline').
-
-        Parameters
-        ----------
-        timeline:
-            Timeline dictionary with keys ``subject``, ``session``, ``run``,
-            ``task``.
-
-        Returns
-        -------
-        Path
-            The path to the segmented movie file shown during a given run.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the .mkv file does not exist (DataLad content not fetched).
-        """
-        seg_name = timeline["task"]
-        mp = Path(
-            f"{self._stimuli_dir}/s{seg_name[2]}/friends_{seg_name}.mkv",
-        )
-        if not mp.exists():
-            raise FileNotFoundError(
-                f"Movie file not found: {mp}\n"
-                "Run study.download() or datalad get to fetch the content."
-            )
-        return mp
-
-    def _load_transcript(self, timeline: dict[str, tp.Any]) -> dict:
-        """
-        Load the speech-to-text transcript of the segmented movie
-        shown during a given run ('timeline').
-
-        Parameters
-        ----------
-        timeline:
-            Timeline dictionary with keys ``subject``, ``session``, ``run``,
-            ``task``.
-
-        Returns
-        -------
-        dict
-            The transcript for the segmented episode shown during a given run.
-        """
-        seg_name = timeline["task"]
-        tp = Path(  # TODO: adjust based on friends.annotations structure
-            f"{self._annotations_dir}/annotations/automated_transcription/"
-            f"s{seg_name[2]}/friends_{seg_name}_model-AA_desc-wUtter_transcript.json",
-        )
-        if not tp.exists():
-            return {
-                "transcript": "",
-                "words": [],
-            }
-        with open(tp, "r") as file:
-            transcript = json.load(file)
-
-        return transcript
+    def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
+        raise NotImplementedError("Friends is not implemented yet.")

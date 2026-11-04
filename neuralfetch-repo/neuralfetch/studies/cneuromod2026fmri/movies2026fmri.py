@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -12,9 +11,9 @@ from .base import _CNeuroModMovieStudy, DEFAULT_SPACE
 class Movie10(_CNeuroModMovieStudy):
     """Courtois NeuroMod — *Movie10* movie-watching fMRI dataset.
 
-    Six subjects watched three Hollywood feature films ("The Bourne Supremacy" (2004), 
-    "The Wolf of Wall Street" (2013), "Hidden Figures" (2016)) and one BBC nature documentary 
-    ("Life : Challenges of life, reptiles and amphibian mammals" (2009)) totalling ~10 hours of 
+    Six subjects watched three Hollywood feature films ("The Bourne Supremacy" (2004),
+    "The Wolf of Wall Street" (2013), "Hidden Figures" (2016)) and one BBC nature documentary
+    ("Life : Challenges of life, reptiles and amphibian mammals" (2009)) totalling ~10 hours of
     movie watching while undergoing 3T fMRI.
 
     Hidden Figure and Life were both visioned twice to support reproducibility analyses.
@@ -56,19 +55,14 @@ class Movie10(_CNeuroModMovieStudy):
         - datalad
     """
 
-    # TASK: tp.ClassVar[str] = "movie10"
     BIDS_REPO: tp.ClassVar[str] = "movie10"
     FMRIPREP_REPO: tp.ClassVar[str] = "movie10.fmriprep"
     STIMULI_REPO: tp.ClassVar[str] = "movie10.stimuli"
     TRANSCRIPTS_REPO: tp.ClassVar[str] = "movie10.annotations"
-    # MOVIES: list[str] = ["bourne", "figures", "life", "wolf"]
 
-    # dataset_name: tp.ClassVar[str] = "CNeuroMod Movie10"
     description: tp.ClassVar[str] = (
         "Six subjects watching 10 hours of Hollywood movies / BBC documentary during 3T fMRI."
     )
-    # bibtex: tp.ClassVar[str] = _CNeuroModMovieStudy.bibtex
-
 
     # -----------------------------------------------------------------
     # Download pattern builders
@@ -113,7 +107,7 @@ class Movie10(_CNeuroModMovieStudy):
 
     def _get_stimulus_path(self, timeline: dict[str, tp.Any]) -> Path:
         """
-        Return the full path of the segmented movie file (.mkv) shown during a 
+        Return the full path of the segmented movie file (.mkv) shown during a
         given run ('timeline').
         """
         stimulus_fp = (
@@ -143,10 +137,10 @@ class Movie10(_CNeuroModMovieStudy):
 class Friends(_CNeuroModMovieStudy):
     """Courtois NeuroMod — *Friends* TV-watching fMRI dataset.
 
-    Six subjects (01, 02, 03, 04, 05, 06) watched several seasons of the 
+    Six subjects (01, 02, 03, 04, 05, 06) watched several seasons of the
     Friends sitcom across multiple scanning sessions while while undergoing
     3T fMRI. One subject (04) watched seasons 1-4, while the remaining subjects
-    watched seasons 1-6 (totalling >50 hours of audio-visual stimulation). 
+    watched seasons 1-6 (totalling >50 hours of audio-visual stimulation).
 
     Most episodes are split into two ~12-minute BOLD runs (labelled a and b), and
     double episodes are split into up to four BOLD runs (a, b, c and d).  Stimuli
@@ -199,7 +193,6 @@ class Friends(_CNeuroModMovieStudy):
     )
     bibtex: tp.ClassVar[str] = _CNeuroModMovieStudy.bibtex
 
-
     # -----------------------------------------------------------------
     # Download pattern builders
     # -----------------------------------------------------------------
@@ -247,7 +240,7 @@ class Friends(_CNeuroModMovieStudy):
 
     def _get_stimulus_path(self, timeline: dict[str, tp.Any]) -> Path:
         """
-        Return the full path of the segmented movie file (.mkv) shown during a 
+        Return the full path of the segmented movie file (.mkv) shown during a
         given run ('timeline').
 
         Parameters
@@ -266,10 +259,9 @@ class Friends(_CNeuroModMovieStudy):
         FileNotFoundError
             If the .mkv file does not exist (DataLad content not fetched).
         """
-        seg_name = timeline['task']
+        seg_name = timeline["task"]
         mp = Path(
-            f"{self._stimuli_dir}/s{seg_name[2]}"
-            f"/friends_{seg_name}.mkv",
+            f"{self._stimuli_dir}/s{seg_name[2]}/friends_{seg_name}.mkv",
         )
         if not mp.exists():
             raise FileNotFoundError(
@@ -278,10 +270,9 @@ class Friends(_CNeuroModMovieStudy):
             )
         return mp
 
-
     def _load_transcript(self, timeline: dict[str, tp.Any]) -> dict:
         """
-        Load the speech-to-text transcript of the segmented movie 
+        Load the speech-to-text transcript of the segmented movie
         shown during a given run ('timeline').
 
         Parameters
@@ -295,10 +286,10 @@ class Friends(_CNeuroModMovieStudy):
         dict
             The transcript for the segmented episode shown during a given run.
         """
-        seg_name = timeline['task']
+        seg_name = timeline["task"]
         tp = Path(  # TODO: adjust based on friends.annotations structure
             f"{self._annotations_dir}/annotations/automated_transcription/"
-            f"s{seg_name[2]}/friends_{seg_name}_model-AA_desc-wUtter_transcript.json",            
+            f"s{seg_name[2]}/friends_{seg_name}_model-AA_desc-wUtter_transcript.json",
         )
         if not tp.exists():
             return {

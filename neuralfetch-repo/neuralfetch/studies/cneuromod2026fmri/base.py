@@ -30,16 +30,20 @@ DEFAULT_RESOLUTION: str | None = "2"
 # Permissions patch
 # ---------------------------------------------------------------------------
 
+
 def _set_dir_permissions(path: Path) -> None:
     """No-op replacement for ``neuralset.events.study._set_dir_permissions``.
     This avoids chmoding the study folder to 777, which can corrupt the git-annex content.
     """
+
+
 # TODO: remove once facebookresearch/neuroai/issues/17 is fixed upstream.
 study._set_dir_permissions = _set_dir_permissions
 
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
+
 
 class _CNeuroModStudy(study.Study):
     """Private base class for all CneuroMod studies.
@@ -90,8 +94,7 @@ class _CNeuroModStudy(study.Study):
     requirements: tp.ClassVar[tuple[str, ...]] = (
         "pybids",
         "datalad",
-        )
-
+    )
 
     # -----------------------------------------------------------------
     # Download
@@ -145,7 +148,9 @@ class _CNeuroModStudy(study.Study):
 
         return sub_path
 
-    def _check_glob_matches(self, repo: str, repo_url: str, sub_path: Path, pattern: str) -> None:
+    def _check_glob_matches(
+        self, repo: str, repo_url: str, sub_path: Path, pattern: str
+    ) -> None:
         """Raise if an include glob matches no file of a cloned repository.
 
         Parameters
@@ -174,8 +179,8 @@ class _CNeuroModStudy(study.Study):
         # so it selects exactly the files the download would.
 
         matcher = download.Datalad(
-                study=repo, dset_dir=self.path, repo_url=repo_url, include=[pattern]
-            )
+            study=repo, dset_dir=self.path, repo_url=repo_url, include=[pattern]
+        )
         if not matcher._selected_paths(sub_path):
             raise RuntimeError(
                 f"No file of {sub_path} matches the include glob {pattern!r}; "
@@ -263,10 +268,10 @@ class _CNeuroModStudy(study.Study):
     def _check_file_exists(self, filepath: Path) -> None:
         """Check if file datalad content is available locally."""
         if not filepath.resolve().exists():
-                raise FileNotFoundError(
-                    f"Content of {filepath} is not available locally. "
-                    "Run study.download() or datalad get to fetch the content."
-                )
+            raise FileNotFoundError(
+                f"Content of {filepath} is not available locally. "
+                "Run study.download() or datalad get to fetch the content."
+            )
 
     def _bids_stem(self, timeline: dict[str, tp.Any]) -> str:
         """BIDS file name stem of a timeline (e.g. ``sub-01_ses-001_task-bourne01``)."""
@@ -282,9 +287,7 @@ class _CNeuroModStudy(study.Study):
             tr = float(json.load(f)["RepetitionTime"])
 
         if not math.isclose(tr, DEFAULT_TR, rel_tol=1e-3):
-            raise ValueError(
-                f"Expected TR {DEFAULT_TR}s, got {tr}s for {filepath}"
-            )
+            raise ValueError(f"Expected TR {DEFAULT_TR}s, got {tr}s for {filepath}")
         return tr
 
     def _get_n_trs(self, filepath: Path) -> int:
@@ -398,8 +401,7 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
         with transcript_fp.open() as f:
             transcript = json.load(f)
         text_info = dict(
-            language=self._get_transcript_language(timeline),
-            modality="heard"
+            language=self._get_transcript_language(timeline), modality="heard"
         )
 
         onset = self._get_stimulus_onset(timeline)
@@ -432,6 +434,7 @@ class _CNeuroModAudioStudy(_CNeuroModStudy):
         events += self._load_transcript_events(timeline)
         return pd.DataFrame(events)
 
+
 class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
     """Abstract base class for all Courtois NeuroMod movie-watching study
     fetchers, including Friends, Movie10 and OOD."""
@@ -447,7 +450,7 @@ class _CNeuroModMovieStudy(_CNeuroModAudioStudy):
             filepath=str(self._get_stimulus_path(timeline)),
         )
 
+
 class _CNeuroModVideoGameStudy(_CNeuroModStudy):
     """Abstract base class for all Courtois NeuroMod videogame-playing study
     fetchers, including Shinobi, Mario, MarioStars and Mario3."""
-

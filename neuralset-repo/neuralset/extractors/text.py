@@ -47,7 +47,7 @@ class BaseText(BaseStatic):
     @infra.apply(
         item_uid=lambda event: f"{event.language}:{event.text}",
         exclude_from_cache_uid="method:_exclude_from_cache_uid",
-        cache_type="MemmapArrayFile",
+        cache_type="MemmapArray",
     )
     def _get_data(self, events: list[_ev.etypes.Text]) -> tp.Iterator[np.ndarray]:
         if len(events) > 1:
@@ -173,6 +173,46 @@ class SpacyEmbedding(BaseText):
                 "model_name and language are mutually exclusive; "
                 f"got model_name={self.model_name!r} and language={self.language!r}"
             )
+
+    def prepare(self, obj: DataframeOrEventsOrSegments) -> None:
+        # Install every model the *uncached* events need once, here in the
+        # submitting process, so cluster workers sharing this environment find
+        # them instead of each pip-installing the same model concurrently.  A
+        # fully cached run installs nothing, as before.  An unsupported language
+        # also fails here rather than in every worker.
+        events: list[_ev.etypes.Word]
+        events = self._event_types_helper.extract(obj)  # type: ignore
+        to_compute = self._uncached(events)
+        if not to_compute:
+            models: set[str] = set()
+        elif self.model_name:
+            models = {self.model_name}
+        else:
+            languages = {event.language or self.language for event in to_compute}
+            models = {utils.spacy_model_name(language=lang) for lang in languages if lang}
+        for model in sorted(models):
+            utils.install_spacy_model(model)
+        super().prepare(events)
+
+    def _uncached(self, events: list[_ev.etypes.Word]) -> list[_ev.etypes.Word]:
+        """Events whose embedding ``_get_data`` will actually compute.
+
+        A read-only check mirroring ``MapInfra``'s own cache lookup: every event
+        without a cache folder or under ``mode="force"``, none under
+        ``mode="read-only"`` (which never computes), else the cache misses.
+        """
+        infra = self.infra
+        if infra.mode == "force":
+            return list(events)
+        if infra.mode == "read-only":
+            return []
+        try:
+            cache = infra.cache_dict
+        except ValueError:  # no cache folder: everything is computed
+            return list(events)
+        item_uid = infra.item_uid
+        with cache.frozen_cache_folder():
+            return [event for event in events if item_uid(event) not in cache]
 
     def get_embedding(self, text: str, language: str = "") -> np.ndarray:
         if self.model_name:
@@ -394,7 +434,7 @@ class HuggingFaceText(BaseStatic, HuggingFaceMixin):
     @infra.apply(
         item_uid=lambda event: f"{event.text}_{getattr(event, 'context', '')}",
         exclude_from_cache_uid="method:_exclude_from_cache_uid",
-        cache_type="MemmapArrayFile",
+        cache_type="MemmapArray",
     )
     def _get_data(
         self, events: list[_ev.etypes.Word | _ev.etypes.Sentence]

@@ -63,7 +63,7 @@ wristband placement and kinematic context at once.
 #   degrees).
 #
 # **What the config is.** A NeuralBench task is one ``config.yaml``, and
-# nothing else: a YAML overlay on ``neuralbench/defaults/config.yaml`` naming
+# nothing else: a YAML overlay on the ``neuralbench/defaults/`` configs naming
 # the study to load, how to split it, what the target is, the loss, and the
 # metrics. Reading it is the fastest way to know exactly what the baseline
 # does.
@@ -203,7 +203,10 @@ wristband placement and kinematic context at once.
 # ``BAD_IK`` events mark intervals without inverse-kinematics labels, and any
 # window overlapping one is dropped from every split; padded recording tails
 # are not segmented into training windows either. Joint angles stay in the
-# radians emg2pose trains on, so the loss and metrics are radians too.
+# radians emg2pose trains on, so the loss and metrics are radians too. EMG is
+# scaled from SI volts to microvolts (``scale_factor: 1e6``) to match emg2pose.
+# Alongside pooled ``test/mae``, the task logs the mean and sample SD of the
+# per-user MAE as ``test/mae_subject_mean`` and ``test/mae_subject_std``.
 #
 # .. warning::
 #

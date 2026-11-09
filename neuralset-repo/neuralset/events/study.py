@@ -4,10 +4,11 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import contextlib
+import difflib
 import functools
 import importlib.metadata
 import logging
-import os
 import typing as tp
 import warnings
 from pathlib import Path
@@ -58,40 +59,13 @@ def _identify_study_subfolder(path: str | Path, name: str) -> Path:
     return path
 
 
-def _set_dir_permissions(path: Path) -> None:
-    """Recursively set 777 permissions on a directory (Unix only).
-
-    Skips files/directories not owned by the current user, since only the
-    owner (or root) may chmod.  This is expected on shared filesystems where
-    another user originally downloaded the study.
-    """
-    if os.name == "nt":
-        logger.info("Skipping permission setting on Windows.")
-        return
-    current_uid = os.getuid()
-    skipped = 0
-    for root, dirs, files in os.walk(path):
-        for item in [root] + [os.path.join(root, n) for n in dirs + files]:
-            try:
-                if os.stat(item).st_uid != current_uid:
-                    skipped += 1
-                    continue
-                os.chmod(item, 0o777)
-            # FileNotFoundError for broken symlinks: partial Datalad download
-            except (PermissionError, FileNotFoundError):
-                logger.debug("Cannot chmod %s (not owner), skipping.", item)
-                skipped += 1
-    if skipped:
-        logger.info("Skipped %d items in %s not owned by current user.", skipped, path)
-    logger.info(f"Permissions set for {path} (skipped {skipped} non-owned items).")
-
-
 def _scan_package_for_studies(base_dir: Path, base_module: str, name: str) -> None:
     """Scan a package directory tree for study modules and import those
     that may define a class matching *name*.
 
-    When *name* is empty (called from :meth:`Study.catalog`), every non-test
-    module is imported so that all ``__init_subclass__`` registrations fire.
+    When *name* is empty, every non-test module is imported so that all
+    ``__init_subclass__`` registrations fire (:meth:`Study.catalog`, and the
+    close-match suggestions of a failed lookup).
 
     Matches class definitions (``class Name``), module-level aliases
     (``Name =``), and string literals (``"Name"``).
@@ -150,9 +124,13 @@ def _resolve_study(name: str = "") -> tp.Type["Study"] | None:
         hint = "import the module that defines it before use"
         if importlib.util.find_spec("neuralfetch") is None:
             hint = f"run `pip install neuralfetch` for public-data studies, or {hint}"
-        raise ImportError(
-            f"Study or EventsTransform {name!r} not found (scanned: {scanned}), {hint}."
-        )
+        with contextlib.suppress(Exception):
+            _resolve_study()  # full scan, so close matches cover unimported studies
+        known = set(STUDIES) | set(base.Step._get_discriminated_subclasses())
+        close = difflib.get_close_matches(name, sorted(known), n=5)
+        near = f" Did you mean: {', '.join(close)}?" if close else ""
+        msg = f"{name!r} not found (scanned: {scanned}), {hint}."
+        raise ImportError(f"{msg}{near} Study.catalog() lists all studies.")
     return cls
 
 
@@ -464,7 +442,6 @@ class Study(patterns.Scatter, base.Step):  # type: ignore[misc]
         if not any(self.path.iterdir()):
             raise RuntimeError(f"Directory is empty: {self.path}")
         logger.info(f"Success: Study downloaded to {self.path}.")
-        _set_dir_permissions(self.path)
         if hasattr(base.Step, "lookup"):  # exca >=0.5.24
             self.lookup().clear_cache()  # type: ignore[attr-defined]
         else:

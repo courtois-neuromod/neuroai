@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 
+import copy
 import logging
 import typing as tp
 import warnings
@@ -26,7 +27,10 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from neuralset.events import etypes
 from neuraltrain.metrics.utils import agg_per_group, agg_retrieval_preds
+
+from .modules import DownstreamWrapperModel
 
 if tp.TYPE_CHECKING:
     from neuraltrain.utils import StandardScaler
@@ -34,9 +38,119 @@ if tp.TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
+class ResetPerStream(Callback):
+    """Reset the model's state at each new stream, on a fresh model copy in evaluation.
+
+    Streams are identified by ``batch.data["stream_id"]`` (see
+    ``Data.stream_by``). A stream starts at each batch whose set of streams
+    differs from the previous batch's, or that opens an epoch or evaluation
+    pass. With windows in timeline then time order, each stream's timelines
+    contiguous, and one window per batch (batch size 1, no shuffling), this is
+    exactly each new stream, seen forward in time. With larger or shuffled
+    batches it fires more often, never less: shuffled training batches almost
+    always start a new stream.
+
+    At each new stream, the model's optional ``reset_state()`` is called.
+    During validation and test, it is called on a fresh copy of the model as it
+    was when evaluation began, so nothing the model changes while predicting
+    (weights, buffers, attributes) carries over to the next stream. The
+    original model is restored when evaluation ends, so training and
+    checkpoints never see the copies. A model that carries state across
+    training batches must detach it from the autograd graph.
+    """
+
+    def __init__(self) -> None:
+        self.original: nn.Module | None = None
+        # stage ("train" or "eval") -> (dataloader_idx, stream ids) of its last batch
+        self.previous: dict[str, tuple[int, frozenset[int]]] = {}
+
+    @staticmethod
+    def _reset_state(model: nn.Module) -> None:
+        reset_state = getattr(model, "reset_state", None)
+        if reset_state is not None:
+            reset_state()
+
+    def _is_new_stream(
+        self, stage: str, batch, batch_idx: int, dataloader_idx: int
+    ) -> bool:
+        key = (dataloader_idx, frozenset(batch.data["stream_id"].flatten().tolist()))
+        is_new = batch_idx == 0 or key != self.previous.get(stage)
+        self.previous[stage] = key
+        return is_new
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        if self._is_new_stream("train", batch, batch_idx, 0):
+            self._reset_state(pl_module.model)
+
+    def on_test_start(self, trainer, pl_module):
+        self.original = pl_module.model
+
+    def on_validation_start(self, trainer, pl_module):
+        self.on_test_start(trainer, pl_module)
+
+    def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
+        if self._is_new_stream("eval", batch, batch_idx, dataloader_idx):
+            pl_module.model = copy.deepcopy(self.original)
+            self._reset_state(pl_module.model)
+
+    def on_validation_batch_start(
+        self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
+    ):
+        self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
+
+    def on_test_end(self, trainer, pl_module):
+        pl_module.model = self.original
+        self.original = None
+
+    def on_validation_end(self, trainer, pl_module):
+        self.on_test_end(trainer, pl_module)
+
+
 def _set_plot_theme() -> None:
     """Apply the plotting theme used by neuralbench callbacks."""
     sns.set_theme(context="paper", style="white")
+
+
+class UnfreezeAtEpoch(Callback):
+    """Keep the pattern-frozen parameters of *model* frozen until its ``unfreeze_at_epoch``.
+
+    The parameters are trainable while the strategy sets up the model, so that
+    DDP registers them for gradient synchronisation, and frozen from the start
+    of fitting.  The optimizer holds them throughout, so they start updating as
+    soon as they receive gradients.
+    """
+
+    def __init__(self, model: DownstreamWrapperModel) -> None:
+        assert model.unfreeze_at_epoch is not None
+        self.model = model
+        self.epoch = model.unfreeze_at_epoch
+
+    def setup(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
+    ) -> None:
+        if stage == "fit":
+            self.model.set_pattern_frozen(False)
+
+    def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if trainer.max_epochs is not None and self.epoch >= trainer.max_epochs:
+            LOGGER.warning(
+                "unfreeze_at_epoch=%d is past max_epochs=%d: the backbone stays "
+                "frozen for the whole run.",
+                self.epoch,
+                trainer.max_epochs,
+            )
+        self.model.set_pattern_frozen(True)
+
+    def on_train_epoch_start(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        if trainer.current_epoch != self.epoch:
+            return
+        self.model.set_pattern_frozen(False)
+        n_trainable = sum(p.numel() for p in pl_module.parameters() if p.requires_grad)
+        LOGGER.info(
+            "Epoch %d: unfroze backbone (%d trainable params)", self.epoch, n_trainable
+        )
 
 
 class TestFullRetrievalMetrics(Callback):
@@ -44,12 +158,29 @@ class TestFullRetrievalMetrics(Callback):
 
     Requires the pl.LightningModule object this callback is attached to to define a
     torch.ModuleDict named `retrieval_metrics` containing the metrics to evaluate.
+
+    ``retrieval_item`` names what one candidate of the retrieval set is:
+
+    - ``"trigger"``: whatever the trigger is labelled with, its text or its
+      filepath. Repeats of a label collapse into one candidate carrying the
+      mean of their targets, which is what a word-level or image-level
+      retrieval score is built on.
+    - ``"window"``: the file a continuous trigger (``Audio``, ``Video``)
+      plays, paired with the window's time within that file (the trigger's
+      ``offset`` plus the window's delay from the trigger), rounded to
+      ``window_decimals`` decimals of a second. Only windows that saw the
+      same moment of the same stimulus collapse, e.g. two subjects watching
+      one scene. For a single event spanning the whole recording,
+      ``"trigger"`` averages targets that differ, and the candidate it yields
+      is a centroid rather than anything the model could have decoded.
     """
 
     def __init__(
         self,
         event_type: tp.Literal["Word", "Image"] = "Word",
         event_field: tp.Literal["text", "category"] = "text",
+        retrieval_item: tp.Literal["trigger", "window"] = "trigger",
+        window_decimals: int = 0,
         retrieval_set_sizes: tuple = (None, 250),
         save_outputs: bool = False,
         logger: tp.Any = None,
@@ -57,6 +188,8 @@ class TestFullRetrievalMetrics(Callback):
     ):
         self.event_type = event_type
         self.event_field = event_field
+        self.retrieval_item = retrieval_item
+        self.window_decimals = window_decimals
         self.retrieval_set_sizes = retrieval_set_sizes
         self.save_outputs = save_outputs
         self.logger = logger
@@ -188,6 +321,21 @@ class TestFullRetrievalMetrics(Callback):
                 full["filepath"].append(trigger.filepath)
             else:
                 pass
+            if self.retrieval_item == "window":
+                full["window"].append(self._window_key(segment))
+
+    def _window_key(self, segment: tp.Any) -> str:
+        """Return the window's ``"<filepath>@<seconds within file>s"``."""
+        trigger = segment.trigger
+        if not isinstance(trigger, etypes.BaseSplittableEvent):
+            raise ValueError(
+                f"retrieval_item='window' needs a continuous trigger (Audio, Video) "
+                f"to place a window within its file, got a {type(trigger).__name__} "
+                f"at {trigger.start:.3f} s; use retrieval_item='trigger'"
+            )
+        time = round(trigger.offset + segment.start - trigger.start, self.window_decimals)
+        time += 0.0  # -0.0 -> 0.0
+        return f"{trigger.filepath}@{time:.{max(self.window_decimals, 0)}f}s"
 
     def _compute_metrics(
         self,
@@ -207,10 +355,20 @@ class TestFullRetrievalMetrics(Callback):
             y_true = torch.cat(full["y_true"], dim=0)
 
             subjects_pred = full["subject"]
-            if "text" in full.keys():
+            if self.retrieval_item == "window":
+                groups_pred = full["window"]
+            elif "text" in full.keys():
                 groups_pred = full["text"]
             else:
                 groups_pred = full["filepath"]
+            if len(set(groups_pred)) < 2:
+                raise ValueError(
+                    f"{step_name}: the retrieval set holds "
+                    f"{len(set(groups_pred))} candidate(s) over {len(groups_pred)} "
+                    f"windows, so there is nothing to rank against and every "
+                    f"metric comes out NaN; for an Audio or Video trigger, set "
+                    f"retrieval_item='window' to rank the windows themselves"
+                )
 
             for retrieval_set_size in self.retrieval_set_sizes:
                 out = self._get_test_full_metrics(

@@ -461,8 +461,7 @@ class BaseDownload(_Module):
 
         self._download(overwrite=overwrite)
         self.get_success_file().write_text("success")
-        print("Done! Consider running giving read/write permissions to everyone:")
-        print(f"chmod -R 777 {self._dl_dir}")  # we should do this on FAIR cluster
+        print("Done!")
 
     @abstractmethod
     def _download(self, overwrite: bool = False) -> None:
@@ -763,7 +762,6 @@ class Gin(Datalad):
 
     branch: str = "master"
 
-    @pydantic.computed_field  # type: ignore[prop-decorator]
     @property
     def _https_base(self) -> str:
         """``https://...<repo>.git`` -> ``https://...<repo>/raw/<branch>``."""
@@ -800,7 +798,8 @@ class Gin(Datalad):
             first_line = head.split(b"\n", 1)[0].decode("ascii")
         except UnicodeDecodeError:
             return None
-        return first_line[len("/annex/objects/") :]
+        # bare "/annex/objects/<key>" or the hashed "/annex/objects/aB/Cd/<key>/<key>"
+        return Path(first_line).name
 
     def _selected_pointers(self, repo_root: Path) -> list[tuple[str, Path]]:
         """``(annex_key, repo-relative path)`` for every selected pointer file.
@@ -1009,9 +1008,13 @@ class Dryad(BaseDownload):
         if not all_versions:
             raise RuntimeError(f"No versions found for DOI {self.doi}")
         latest = all_versions[-1]
-        files_href = latest["_links"]["stash:files"]["href"]
-        files_resp = self._api_get(files_href)
-        return files_resp.get("_embedded", {}).get("stash:files", [])
+        files: list[dict[str, tp.Any]] = []
+        href: str | None = latest["_links"]["stash:files"]["href"]
+        while href is not None:  # paginated, 20 files per page
+            page = self._api_get(href)
+            files += page.get("_embedded", {}).get("stash:files", [])
+            href = page.get("_links", {}).get("next", {}).get("href")
+        return files
 
     def _download(self, overwrite: bool = False) -> None:
         from urllib.parse import quote
@@ -1432,6 +1435,36 @@ class Huggingface(BaseDownload):
             ignore_patterns=self.exclude or None,
         )
         print("\nDownloaded Dataset")
+
+
+class Nemar(BaseDownload):
+    """Download a published NEMAR dataset version (``nm…``) into ``download/<study>/``.
+
+    ``version`` pins the release (e.g. ``"1.0.4"``; ``None``: latest) and keys
+    the success file, so a bump downloads again. ``include``/``exclude`` select
+    over the whole release (raw data, stimuli, derivatives, code, …).
+    """
+
+    requirements: tp.ClassVar[tuple[str, ...]] = ("nemar-py>=0.3.1",)
+    version: str | None = None
+
+    def get_success_file(self) -> Path:
+        return self._dl_dir / f"nemar_{self.study}_{self.version}_success_download.txt"
+
+    def _download(self, overwrite: bool = False) -> None:
+        import nemar  # type: ignore[import-not-found]
+
+        nemar.download(
+            dataset=self.study,
+            tag=self.version,
+            target_dir=self._dl_dir / self.study,
+            include=self.include or None,
+            exclude=self.exclude or None,
+            # nemar-py keeps only the raw tree by default: open every BIDS tree
+            # so that include/exclude alone select, as for the other backends
+            scope=["raw", "derivatives", "stimuli", "sourcedata", "code"],
+            trust_existing=not overwrite,  # overwrite re-hashes files on disk
+        )
 
 
 class Openneuro(BaseDownload):

@@ -29,6 +29,7 @@ from .registry import (
     ALL_TASKS,
     DEFAULTS_DIR,
     _resolve_task_dir,
+    load_default_config,
     load_yaml_config,
 )
 
@@ -49,7 +50,7 @@ def test_prepare_task_configs(dataset: str | None) -> None:
     schalk2004bci2000 uses =replace= which wipes the study dict; _restore_default_source
     must re-inject path and infra from the defaults.
     """
-    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
+    config = ConfDict(load_default_config("eeg"))
     grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
     datasets: list[str | None] | None = [dataset] if dataset is not None else None
     configs = prepare_task_configs(
@@ -85,6 +86,22 @@ def test_cluster_config_wires_all_infra_clusters(
     assert raw["infra"]["cluster"] == cluster
     assert raw["data"]["neuro"]["infra"]["cluster"] == cluster
     assert raw["data"]["target"]["infra"]["cluster"] == cluster
+
+
+@pytest.mark.parametrize(("account", "qos"), [("my_account", "my_qos"), ("", "")])
+def test_slurm_account_and_qos_wire_training_infra_only(
+    patch_config: Callable[..., None], account: str, qos: str
+) -> None:
+    """SLURM_ACCOUNT/SLURM_QOS reach the training infra (empty means None); the
+    feature-extraction cache infras keep Slurm's default account and QoS."""
+    patch_config(SLURM_ACCOUNT=account, SLURM_QOS=qos)
+    raw = load_yaml_config(DEFAULTS_DIR / "config.yaml")
+    assert raw is not None
+    assert raw["infra"]["slurm_account"] == (account or None)
+    assert raw["infra"]["slurm_qos"] == (qos or None)
+    for infra in (raw["data"]["neuro"]["infra"], raw["data"]["target"]["infra"]):
+        assert "slurm_account" not in infra
+        assert "slurm_qos" not in infra
 
 
 @pytest.mark.parametrize("cluster", [None, "slurm"])
@@ -137,7 +154,7 @@ def _capture_assembled_experiments(
     captured: dict[str, tp.Any] = {}
 
     class _FakeAggregator:
-        def __init__(self, experiments: list[ConfDict], debug: bool) -> None:
+        def __init__(self, experiments: list[ConfDict], **_: tp.Any) -> None:
             captured["experiments"] = experiments
 
         def prepare(self) -> None:

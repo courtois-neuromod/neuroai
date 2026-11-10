@@ -4,22 +4,117 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+from collections import defaultdict
 from types import SimpleNamespace
 
+import lightning.pytorch as pl
 import matplotlib
 import numpy as np
 import pandas as pd
 import pytest
 import torch
+import torchmetrics
 from exca.cachedict import CacheDict
+from lightning.pytorch.loggers.logger import DummyLogger
+from torch import nn
+
+from neuralset.dataloader import Batch
 
 from .callbacks import (
     PlotRegressionScatter,
     RecordingLevelEval,
+    ResetPerStream,
+    UnfreezeAtEpoch,
     WindowPredictionCollector,
 )
+from .modules import DownstreamWrapper, DownstreamWrapperModel
+from .pl_module import BrainModule
 
 matplotlib.use("Agg")
+
+
+class _Backbone(nn.Linear):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x)
+
+
+def test_unfreeze_at_epoch() -> None:
+    backbone = _Backbone(4, 8)
+    backbone.bias.requires_grad = False  # frozen by the model itself
+    wrapper = DownstreamWrapper(layers_to_unfreeze=[""], unfreeze_at_epoch=1).build(
+        backbone, {"x": torch.randn(2, 4)}, n_outputs=1
+    )
+    callback = UnfreezeAtEpoch(wrapper)
+    trainer = SimpleNamespace(max_epochs=2, current_epoch=0)
+    callback.setup(trainer, wrapper, stage="fit")  # type: ignore[arg-type]
+    assert backbone.weight.requires_grad, "DDP must see the backbone as trainable"
+    callback.on_fit_start(trainer, wrapper)  # type: ignore[arg-type]
+    callback.on_train_epoch_start(trainer, wrapper)  # type: ignore[arg-type]
+    assert not backbone.weight.requires_grad
+    trainer.current_epoch = 1
+    callback.on_train_epoch_start(trainer, wrapper)  # type: ignore[arg-type]
+    assert backbone.weight.requires_grad
+    assert not backbone.bias.requires_grad
+
+
+def test_reset_per_stream_in_lightning():
+    class Model(nn.Module):
+        total = torch.tensor(100.0)  # a missed reset must also fail
+
+        def reset_state(self):
+            self.total = torch.tensor(0.0)
+
+        def forward(self, x):
+            self.total = self.total + x.mean()
+            observed.append(self.total.item())
+            return self.total.expand(x.shape[0], 1)
+
+    observed: list[float] = []
+    batches = [
+        Batch(
+            segments=[SimpleNamespace(timeline=s) for s in streams],
+            data={
+                "neuro": torch.full((len(streams), 1, 4), 2.0**i),
+                "target": torch.zeros(len(streams), 1),
+                "subject_id": torch.zeros(len(streams), 1, dtype=torch.long),
+                "stream_id": torch.tensor([[s] for s in streams]),
+            },
+        )
+        for i, streams in enumerate([[0], [0], [0, 1], [1], [1]])
+    ]
+    backbone = Model()
+    model = DownstreamWrapperModel(backbone, torch.Size([1]), None, 1, aggregation=None)
+    module = BrainModule(
+        model=model,
+        loss=nn.L1Loss(),
+        metrics={"mae": torchmetrics.MeanAbsoluteError()},
+        lightning_optimizer_config=None,
+    )
+    callback = ResetPerStream()
+    trainer = pl.Trainer(
+        accelerator="cpu",
+        callbacks=[callback],
+        logger=DummyLogger(),
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    loader = torch.utils.data.DataLoader(batches, batch_size=None)
+    for stage, run in [("test", trainer.test), ("val", trainer.validate)] * 2:
+        result = run(module, loader, verbose=False)[0]
+        assert result[f"{stage}/mae"] == pytest.approx((1 + 3 + 2 * 4 + 8 + 24) / 6)
+    per_timeline = [1.0, 3.0, 4.0, 8.0, 24.0]
+    assert observed == per_timeline * 4
+    assert module.model is model and backbone.total == 100, "original model changed"
+    observed.clear()
+    for batch_idx, i in enumerate([0, 1, 1, 2, 3, 4]):
+        if batch_idx == 2:
+            trainer.validate(module, loader, verbose=False)
+        callback.on_train_batch_start(None, module, batches[i], batch_idx)
+        module.model_forward(batches[i])
+    assert observed == [1.0, 3.0] + per_timeline + [5.0, 4.0, 8.0, 24.0]
+    stateless = SimpleNamespace(model=nn.Identity())
+    callback.on_train_batch_start(None, stateless, batches[0], 0)
 
 
 class MockSegment:
@@ -420,6 +515,78 @@ def test_edge_case_all_same_prediction(mock_trainer, mock_pl_module):
 
     # Should complete without error
     mock_pl_module.test_full_metrics["test/acc"].update.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestFullRetrievalMetrics tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "window_decimals, times", [(0, ["50", "50", "52"]), (1, ["50.0", "49.8", "52.0"])]
+)
+def test_window_items_pool_the_subjects_that_saw_the_same_moment(
+    tmp_path, window_decimals, times
+):
+    """Two subjects enter one film at different recording times and offsets."""
+    from neuralset.events.etypes import Video
+
+    from .callbacks import TestFullRetrievalMetrics
+
+    film = tmp_path / "cars-2.mp4"
+    film.touch()
+
+    def segment(subject: str, trigger_start: float, offset: float, start: float):
+        trigger = Video(
+            start=trigger_start,
+            timeline=subject,
+            offset=offset,
+            duration=30.0,
+            frequency=25.0,
+            filepath=film,
+            extra={"subject": subject},
+        )
+        return SimpleNamespace(start=start, trigger=trigger)
+
+    batch = SimpleNamespace(
+        segments=[
+            # film time 50.0 s and 49.8 s
+            segment("sub_3", trigger_start=100.0, offset=40.0, start=110.0),
+            segment("sub_7", trigger_start=7.5, offset=48.0, start=9.3),
+            segment("sub_3", trigger_start=100.0, offset=40.0, start=112.0),
+        ]
+    )
+    callback = TestFullRetrievalMetrics(
+        retrieval_item="window", window_decimals=window_decimals
+    )
+    callback.full_outputs = {0: defaultdict(list)}
+    outputs = (torch.randn(3, 4), torch.randn(3, 4))
+
+    callback._collate_outputs(outputs, batch, dataloader_idx=0)
+
+    assert callback.full_outputs[0]["window"] == [f"{film}@{t}s" for t in times]
+
+
+def test_a_retrieval_set_of_one_candidate_raises_rather_than_logging_nan():
+    """One ``Audio`` event over the whole podcast leaves a single candidate."""
+    from .callbacks import TestFullRetrievalMetrics
+
+    callback = TestFullRetrievalMetrics()
+    callback.full_outputs = {
+        0: {
+            "y_pred": [torch.randn(4, 8)],
+            "y_true": [torch.randn(4, 8)],
+            "subject": ["sub0"] * 4,
+            "text": ["the podcast"] * 4,
+        }
+    }
+    pl_module = SimpleNamespace(
+        test_full_retrieval_metrics={"test/full_retrieval/inv_norm_rank_mean": None}
+    )
+    trainer = SimpleNamespace(test_dataloaders=[None])
+
+    with pytest.raises(ValueError, match="1 candidate"):
+        callback._compute_metrics(trainer, pl_module, step_name="test")
 
 
 # ---------------------------------------------------------------------------
